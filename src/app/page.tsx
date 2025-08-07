@@ -1,95 +1,53 @@
 import Image from "next/image";
 import styles from "./page.module.css";
+import { Todofuken } from "../components/Todofuken";
+import { Shikutyoson } from "../components/Shikutyoson";
 
 export default function Home() {
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol>
-          <li>
-            Get started by editing <code>src/app/page.tsx</code>.
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.secondary}
-          >
-            Read our docs
-          </a>
-        </div>
+    <>
+      <main>
+        <section>
+          <div>
+            <h1>草野球 is Good</h1>
+            <p>
+              草野球・ソフトボールが好きな人たちの記録を綴る
+              <br />
+              全ての機能が無料のスコア登録サービス
+            </p>
+          </div>
+          <div>
+            <label>チームを探す</label>
+            <Todofuken />
+            <Shikutyoson />
+            <input type="text" />
+            <button>検索</button>
+          </div>
+        </section>
+        <section>
+          <h2>使い方、特徴</h2>
+          <p>草野球 is Goodは以下の3点が特徴のサービスです</p>
+          <div>
+            <h3>全ての機能が無料で使えます</h3>
+            <p>
+              草野球 is
+              Goodは、全ての機能が無料で利用でき、過去の試合の記録も無制限で登録できます。
+            </p>
+          </div>
+          <div>
+            <h3>チーム運営タスクの記録もできます</h3>
+            <p>
+              安打数や奪三振数だけでなく、グランド確保係や道具保管・持ってくる係なども記録でき、称賛する事ができます。
+            </p>
+          </div>
+          <div>
+            <h3>個人でも試合の記録ができます</h3>
+            <p>
+              チームが試合の記録をしていなくても、助っ人だけで野球を楽しんでいる人でも、個人として試合の記録をする事ができます。
+            </p>
+          </div>
+        </section>
       </main>
-      <footer className={styles.footer}>
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+    </>
   );
 }
