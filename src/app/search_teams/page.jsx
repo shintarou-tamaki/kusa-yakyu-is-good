@@ -2,6 +2,7 @@ import React from "react";
 import { Todofuken } from "../../components/Todofuken";
 import { Shikutyoson } from "../../components/Shikutyoson";
 import { PlayStyle } from "../../components/PlayStyle";
+import { Headline1 } from "../../components/Headline1";
 
 const teamInfo = [
   {
@@ -53,6 +54,7 @@ const teamInfo = [
 export default function page() {
   return (
     <>
+      <Headline1>チーム一覧</Headline1>
       <section>
         <div>
           <input type="text" defaultValue="チーム名" />
@@ -66,10 +68,10 @@ export default function page() {
         </div>
       </section>
       <section>
-        <div>
+        <div className="grid grid-cols-3 gap-4">
           {teamInfo.map((ti, index) => (
-            <div key={index}>
-              <h3>{ti.teamNme}</h3>
+            <div key={index} className="p-3">
+              <h3 className="font-bold text-2xl">{ti.teamNme}</h3>
               <p>{ti.teamLocation}</p>
             </div>
           ))}

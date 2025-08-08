@@ -1,10 +1,11 @@
 import React from "react";
 import { GameList } from "../../components/GameList";
+import { Headline1 } from "../../components/Headline1";
 
 export default function page() {
   return (
     <>
-      <h1>EXODUS</h1>
+      <Headline1>EXODUS</Headline1>
       <p>東京都</p>
       <section>
         <h2>チーム情報</h2>
