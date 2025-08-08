@@ -1,4 +1,5 @@
 import React from "react";
+import { GameList } from "../../components/GameList";
 
 export default function page() {
   return (
@@ -31,6 +32,10 @@ export default function page() {
           <dt>メンバー募集状況</dt>
           <dd>募集中</dd>
         </dl>
+      </section>
+      <section>
+        <h2>直近5試合</h2>
+        <GameList />
       </section>
     </>
   );

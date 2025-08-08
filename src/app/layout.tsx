@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
+import Link from "next/link";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,6 +31,23 @@ export default function RootLayout({
         <Header />
         {children}
         <Footer />
+        <ul>
+          <li>
+            <Link href="/">Home</Link>
+          </li>
+          <li>
+            <Link href="/search_teams">search_teams</Link>
+          </li>
+          <li>
+            <Link href="/team-ditail">team-ditail</Link>
+          </li>
+          <li>
+            <Link href="/game-list">game-list</Link>
+          </li>
+          <li>
+            <Link href="/game-ditail">game-ditail</Link>
+          </li>
+        </ul>
       </body>
     </html>
   );
