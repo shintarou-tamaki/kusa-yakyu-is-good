@@ -30,20 +30,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClientComponentClient();
 
   useEffect(() => {
+    let mounted = true;
+    
+    // タイムアウト設定（10秒後に強制的にローディング終了）
+    const timeoutId = setTimeout(() => {
+      if (mounted) {
+        console.warn('認証のタイムアウトが発生しました');
+        setLoading(false);
+      }
+    }, 10000);
+
     // 初期認証状態の確認
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        await fetchUserProfile(session.user.id);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('セッション取得エラー:', error);
+          if (mounted) setLoading(false);
+          return;
+        }
+
+        if (mounted) {
+          setUser(session?.user ?? null);
+          
+          if (session?.user) {
+            await fetchUserProfile(session.user.id);
+          }
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('初期セッション取得エラー:', error);
+        if (mounted) setLoading(false);
       }
-      setLoading(false);
     };
 
     // 認証状態の変更を監視
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (!mounted) return;
+        
         console.log('Auth state changed:', event, session?.user?.id);
         setUser(session?.user ?? null);
         
@@ -58,16 +84,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     getInitialSession();
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      clearTimeout(timeoutId);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchUserProfile = async (userId: string) => {
     try {
+      // タイムアウト付きでプロファイル取得
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const { data, error } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .single()
+        .abortSignal(controller.signal);
+
+      clearTimeout(timeoutId);
 
       if (error && error.code !== 'PGRST116') {
         console.error('プロファイル取得エラー:', error);
@@ -77,8 +114,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (data) {
         setProfile(data);
       }
-    } catch (error) {
-      console.error('プロファイル取得エラー:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.warn('プロファイル取得がタイムアウトしました');
+      } else {
+        console.error('プロファイル取得エラー:', error);
+      }
     }
   };
 
@@ -86,24 +127,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('handleAuthSuccess called for user:', user.id);
       
-      // ユーザープロファイルが存在するかチェック
+      // タイムアウト付きで既存プロファイル確認
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
       const { data: existingProfile, error: fetchError } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', user.id)
-        .single();
+        .single()
+        .abortSignal(controller.signal);
+
+      clearTimeout(timeoutId);
 
       console.log('Existing profile check:', { existingProfile, fetchError });
 
       if (fetchError && fetchError.code !== 'PGRST116') {
         console.error('プロファイル取得時のエラー:', fetchError);
+        // エラーでもフォールバックプロファイルを設定
+        setFallbackProfile(user);
         return;
       }
 
       if (!existingProfile) {
         console.log('Creating new profile for user:', user.id);
         
-        // 新規ユーザーの場合、プロファイルを作成
         const profileData = {
           id: user.id,
           display_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'ユーザー',
@@ -113,11 +161,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         console.log('Profile data to insert:', profileData);
 
+        // タイムアウト付きでプロファイル作成
+        const createController = new AbortController();
+        const createTimeoutId = setTimeout(() => createController.abort(), 5000);
+
         const { data: newProfile, error } = await supabase
           .from('user_profiles')
           .insert(profileData)
           .select()
-          .single();
+          .single()
+          .abortSignal(createController.signal);
+
+        clearTimeout(createTimeoutId);
 
         console.log('Profile creation result:', { newProfile, error });
 
@@ -129,14 +184,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             code: error.code
           });
           
-          // エラーが発生してもアプリを続行できるように、最小限のプロファイルを設定
-          setProfile({
-            id: user.id,
-            display_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'ユーザー',
-            avatar_url: user.user_metadata.avatar_url || null,
-            provider: user.app_metadata.provider || 'unknown',
-            created_at: new Date().toISOString()
-          });
+          // エラーが発生してもフォールバックプロファイルを設定
+          setFallbackProfile(user);
           return;
         }
         setProfile(newProfile);
@@ -144,18 +193,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('Using existing profile:', existingProfile);
         setProfile(existingProfile);
       }
-    } catch (error) {
-      console.error('ユーザープロファイル処理エラー:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.warn('プロファイル処理がタイムアウトしました');
+      } else {
+        console.error('ユーザープロファイル処理エラー:', error);
+      }
       
-      // フォールバック: 最小限のプロファイルを設定
-      setProfile({
-        id: user.id,
-        display_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'ユーザー',
-        avatar_url: user.user_metadata.avatar_url || null,
-        provider: user.app_metadata.provider || 'unknown',
-        created_at: new Date().toISOString()
-      });
+      // エラーやタイムアウトでもフォールバックプロファイルを設定
+      setFallbackProfile(user);
     }
+  };
+
+  const setFallbackProfile = (user: User) => {
+    setProfile({
+      id: user.id,
+      display_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'ユーザー',
+      avatar_url: user.user_metadata.avatar_url || null,
+      provider: user.app_metadata.provider || 'unknown',
+      created_at: new Date().toISOString()
+    });
   };
 
   const signInWithGoogle = async () => {

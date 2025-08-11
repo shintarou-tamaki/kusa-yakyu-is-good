@@ -1,4 +1,3 @@
-// app/layout.tsx - ルートレイアウト
 import './globals.css'
 import { AuthProvider } from '@/components/auth/AuthProvider'
 import { Header } from '@/components/layout/Header'
