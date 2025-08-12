@@ -11,14 +11,27 @@ export async function middleware(req: NextRequest) {
     data: { session },
   } = await supabase.auth.getSession();
 
+  // 公開ページのパス（認証不要）
+  const publicPaths = [
+    "/",
+    "/search/teams",
+    "/search/games",
+    "/login",
+    "/auth/callback",
+  ];
+
   // 保護されたルートの定義
   const protectedRoutes = ["/dashboard", "/teams", "/games", "/profile"];
+
+  const isPublicPath = publicPaths.some(
+    (path) => req.nextUrl.pathname === path
+  );
   const isProtectedRoute = protectedRoutes.some((route) =>
     req.nextUrl.pathname.startsWith(route)
   );
 
   // 認証が必要なページにアクセスしようとした場合
-  if (isProtectedRoute && !session) {
+  if (isProtectedRoute && !isPublicPath && !session) {
     const redirectUrl = req.nextUrl.clone();
     redirectUrl.pathname = "/login";
     // リダイレクト後に元のページに戻れるように、元のURLを保存
