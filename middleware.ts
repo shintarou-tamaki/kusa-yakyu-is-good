@@ -20,15 +20,36 @@ export async function middleware(req: NextRequest) {
     "/auth/callback",
   ];
 
-  // 保護されたルートの定義
-  const protectedRoutes = ["/dashboard", "/teams", "/games", "/profile"];
+  // 公開ページのパターン（正規表現で判定）
+  const publicPatterns = [
+    /^\/teams\/[^\/]+$/, // /teams/[teamId]
+    /^\/teams\/[^\/]+\/games$/, // /teams/[teamId]/games
+    /^\/games\/[^\/]+$/, // /games/[gameId] - 試合詳細も公開
+  ];
 
-  const isPublicPath = publicPaths.some(
-    (path) => req.nextUrl.pathname === path
-  );
-  const isProtectedRoute = protectedRoutes.some((route) =>
-    req.nextUrl.pathname.startsWith(route)
-  );
+  // 保護されたルートの定義
+  const protectedRoutes = [
+    "/dashboard",
+    "/teams/create",
+    "/games/create",
+    "/profile",
+  ];
+
+  // 保護されたパターン（編集・管理系）
+  const protectedPatterns = [
+    /^\/teams\/[^\/]+\/edit$/, // /teams/[teamId]/edit
+    /^\/teams\/[^\/]+\/members$/, // /teams/[teamId]/members
+    /^\/games\/[^\/]+\/edit$/, // /games/[gameId]/edit
+    /^\/games\/[^\/]+\/score$/, // /games/[gameId]/score
+  ];
+
+  const isPublicPath =
+    publicPaths.includes(req.nextUrl.pathname) ||
+    publicPatterns.some((pattern) => pattern.test(req.nextUrl.pathname));
+
+  const isProtectedRoute =
+    protectedRoutes.some((route) => req.nextUrl.pathname.startsWith(route)) ||
+    protectedPatterns.some((pattern) => pattern.test(req.nextUrl.pathname));
 
   // 認証が必要なページにアクセスしようとした場合
   if (isProtectedRoute && !isPublicPath && !session) {

@@ -6,90 +6,191 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-interface Team {
+interface Game {
   id: string;
   name: string;
-  description: string;
-  owner_id: string;
+  game_date: string;
+  game_time: string | null;
+  location: string | null;
+  description: string | null;
+  home_team_id: string | null;
+  opponent_name: string;
+  status: "scheduled" | "in_progress" | "completed" | "cancelled";
+  home_score: number;
+  opponent_score: number;
+  record_type: "team" | "personal";
+  is_public: boolean;
+  created_by: string;
   created_at: string;
   updated_at: string;
 }
 
+interface Team {
+  id: string;
+  name: string;
+}
+
 interface PageProps {
   params: Promise<{
-    teamId: string;
+    gameId: string;
   }>;
 }
 
-export default function TeamDetailPage({ params }: PageProps) {
+export default function GameDetailPage({ params }: PageProps) {
   // React.use()でparamsを解決
   const resolvedParams = use(params);
-  const teamId = resolvedParams.teamId;
+  const gameId = resolvedParams.gameId;
 
+  const [game, setGame] = useState<Game | null>(null);
   const [team, setTeam] = useState<Team | null>(null);
   const [loading, setLoading] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
+  const [isTeamMember, setIsTeamMember] = useState(false);
   const { user } = useAuth();
   const router = useRouter();
   const supabase = createClientComponentClient();
 
   useEffect(() => {
-    // ユーザーがログインしていない場合はmiddlewareが処理するため、
-    // ここでのリダイレクトは不要
-    if (user && teamId) {
-      fetchTeam();
+    if (gameId) {
+      fetchGame();
     }
-  }, [user, teamId]);
+  }, [gameId, user]);
 
-  const fetchTeam = async () => {
+  const fetchGame = async () => {
     try {
-      const { data, error } = await supabase
-        .from("teams")
+      // 試合情報を取得
+      const { data: gameData, error: gameError } = await supabase
+        .from("games")
         .select("*")
-        .eq("id", teamId)
+        .eq("id", gameId)
         .single();
 
-      if (error) {
-        console.error("チーム取得エラー:", error);
-        router.push("/teams");
+      if (gameError || !gameData) {
+        console.error("試合取得エラー:", gameError);
+        router.push("/dashboard");
         return;
       }
 
-      if (!data) {
-        router.push("/teams");
-        return;
-      }
+      setGame(gameData);
+      setIsOwner(gameData.created_by === user?.id);
 
-      setTeam(data);
-      setIsOwner(data.owner_id === user?.id);
+      // チーム情報を取得（存在する場合）
+      if (gameData.home_team_id) {
+        const { data: teamData } = await supabase
+          .from("teams")
+          .select("id, name")
+          .eq("id", gameData.home_team_id)
+          .single();
+
+        if (teamData) {
+          setTeam(teamData);
+
+          // チームメンバーかチェック
+          if (user) {
+            const { data: memberData } = await supabase
+              .from("team_members")
+              .select("id")
+              .eq("team_id", gameData.home_team_id)
+              .eq("user_id", user.id)
+              .single();
+
+            const { data: teamOwner } = await supabase
+              .from("teams")
+              .select("owner_id")
+              .eq("id", gameData.home_team_id)
+              .single();
+
+            setIsTeamMember(!!memberData || teamOwner?.owner_id === user?.id);
+            setCanEdit(
+              gameData.created_by === user?.id ||
+                teamOwner?.owner_id === user?.id
+            );
+          }
+        } else {
+          setCanEdit(user ? gameData.created_by === user?.id : false);
+        }
+      } else {
+        setCanEdit(user ? gameData.created_by === user?.id : false);
+      }
     } catch (error) {
-      console.error("チーム取得エラー:", error);
-      router.push("/teams");
+      console.error("試合取得エラー:", error);
+      router.push("/dashboard");
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async () => {
-    if (
-      !confirm("本当にこのチームを削除しますか？この操作は取り消せません。")
-    ) {
+    if (!confirm("本当にこの試合を削除しますか？この操作は取り消せません。")) {
       return;
     }
 
     try {
-      const { error } = await supabase.from("teams").delete().eq("id", teamId);
+      const { error } = await supabase.from("games").delete().eq("id", gameId);
 
       if (error) {
-        console.error("チーム削除エラー:", error);
-        alert("チームの削除に失敗しました");
+        console.error("試合削除エラー:", error);
+        alert("試合の削除に失敗しました");
         return;
       }
 
-      router.push("/teams");
+      router.push("/dashboard");
     } catch (error) {
-      console.error("チーム削除エラー:", error);
-      alert("チームの削除に失敗しました");
+      console.error("試合削除エラー:", error);
+      alert("試合の削除に失敗しました");
+    }
+  };
+
+  const handleStatusChange = async (newStatus: Game["status"]) => {
+    try {
+      const { error } = await supabase
+        .from("games")
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", gameId);
+
+      if (error) {
+        console.error("ステータス更新エラー:", error);
+        alert("ステータスの更新に失敗しました");
+        return;
+      }
+
+      setGame((prev) => (prev ? { ...prev, status: newStatus } : null));
+    } catch (error) {
+      console.error("ステータス更新エラー:", error);
+    }
+  };
+
+  const getStatusColor = (status: Game["status"]) => {
+    switch (status) {
+      case "scheduled":
+        return "bg-blue-100 text-blue-800";
+      case "in_progress":
+        return "bg-yellow-100 text-yellow-800";
+      case "completed":
+        return "bg-green-100 text-green-800";
+      case "cancelled":
+        return "bg-red-100 text-red-800";
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
+
+  const getStatusText = (status: Game["status"]) => {
+    switch (status) {
+      case "scheduled":
+        return "予定";
+      case "in_progress":
+        return "進行中";
+      case "completed":
+        return "終了";
+      case "cancelled":
+        return "中止";
+      default:
+        return status;
     }
   };
 
@@ -101,13 +202,13 @@ export default function TeamDetailPage({ params }: PageProps) {
     );
   }
 
-  if (!team) {
+  if (!game) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600 mb-4">チームが見つかりません</p>
-          <Link href="/teams" className="text-blue-600 hover:text-blue-700">
-            チーム一覧に戻る
+          <p className="text-gray-600 mb-4">試合が見つかりません</p>
+          <Link href="/dashboard" className="text-blue-600 hover:text-blue-700">
+            ダッシュボードに戻る
           </Link>
         </div>
       </div>
@@ -120,7 +221,7 @@ export default function TeamDetailPage({ params }: PageProps) {
         {/* 戻るボタン */}
         <div className="mb-6">
           <Link
-            href="/teams"
+            href={team ? `/teams/${team.id}` : "/dashboard"}
             className="inline-flex items-center text-gray-600 hover:text-gray-900"
           >
             <svg
@@ -136,171 +237,241 @@ export default function TeamDetailPage({ params }: PageProps) {
                 d="M15 19l-7-7 7-7"
               />
             </svg>
-            チーム一覧に戻る
+            {team ? "チーム詳細に戻る" : "ダッシュボードに戻る"}
           </Link>
         </div>
 
-        {/* チーム情報 */}
+        {/* 試合情報カード */}
         <div className="bg-white rounded-lg shadow-lg overflow-hidden">
           {/* ヘッダー */}
-          <div className="bg-gradient-to-r from-blue-500 to-blue-600 px-6 py-8">
+          <div className="bg-gradient-to-r from-green-500 to-green-600 px-6 py-8">
             <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mr-4">
-                  <span className="text-3xl font-bold text-blue-600">
-                    {team.name.charAt(0).toUpperCase()}
+              <div>
+                <h1 className="text-3xl font-bold text-white mb-2">
+                  {game.name}
+                </h1>
+                <div className="flex items-center space-x-4 text-green-100">
+                  <span className="flex items-center">
+                    <svg
+                      className="w-5 h-5 mr-1"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      />
+                    </svg>
+                    {new Date(game.game_date).toLocaleDateString("ja-JP")}
                   </span>
-                </div>
-                <div>
-                  <h1 className="text-3xl font-bold text-white">{team.name}</h1>
-                  <p className="text-blue-100 mt-1">
-                    作成日:{" "}
-                    {new Date(team.created_at).toLocaleDateString("ja-JP")}
-                  </p>
+                  {game.game_time && (
+                    <span className="flex items-center">
+                      <svg
+                        className="w-5 h-5 mr-1"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                      {game.game_time}
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {isOwner && (
-                <div className="flex space-x-2">
+              <div className="flex items-center space-x-2">
+                <span
+                  className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(
+                    game.status
+                  )}`}
+                >
+                  {getStatusText(game.status)}
+                </span>
+                {game.record_type === "personal" && (
+                  <span className="px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
+                    個人記録
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* スコアボード */}
+          {(game.status === "in_progress" || game.status === "completed") && (
+            <div className="bg-gray-900 text-white p-6">
+              <div className="grid grid-cols-3 gap-4 items-center text-center">
+                <div>
+                  <div className="text-gray-400 text-sm mb-1">HOME</div>
+                  <div className="text-2xl font-bold">
+                    {team?.name || "ホーム"}
+                  </div>
+                </div>
+                <div className="text-4xl font-bold">
+                  <span>{game.home_score}</span>
+                  <span className="mx-4 text-gray-500">-</span>
+                  <span>{game.opponent_score}</span>
+                </div>
+                <div>
+                  <div className="text-gray-400 text-sm mb-1">AWAY</div>
+                  <div className="text-2xl font-bold">{game.opponent_name}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 詳細情報 */}
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              {/* 基本情報 */}
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  試合情報
+                </h2>
+                <dl className="space-y-3">
+                  {/* 場所 - 予定試合では条件付き表示 */}
+                  {game.location && (
+                    <div>
+                      <dt className="text-sm text-gray-600">場所</dt>
+                      <dd className="text-gray-900 flex items-center mt-1">
+                        <svg
+                          className="w-4 h-4 mr-1 text-gray-400"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </svg>
+                        {game.status === "scheduled" &&
+                        !isTeamMember &&
+                        game.home_team_id ? (
+                          <span className="text-gray-400 italic">
+                            チームメンバーのみ閲覧可能
+                          </span>
+                        ) : (
+                          game.location
+                        )}
+                      </dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt className="text-sm text-gray-600">対戦相手</dt>
+                    <dd className="text-gray-900 mt-1">{game.opponent_name}</dd>
+                  </div>
+                  {team && (
+                    <div>
+                      <dt className="text-sm text-gray-600">チーム</dt>
+                      <dd className="mt-1">
+                        <Link
+                          href={`/teams/${team.id}`}
+                          className="text-blue-600 hover:text-blue-700"
+                        >
+                          {team.name}
+                        </Link>
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+
+              {/* メモ・備考 */}
+              {game.description && (
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                    メモ・備考
+                  </h2>
+                  <p className="text-gray-700 whitespace-pre-wrap">
+                    {game.description}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* アクションボタン */}
+            {canEdit && (
+              <div className="border-t pt-6">
+                <div className="flex flex-wrap gap-2">
+                  {/* ステータス変更ボタン */}
+                  {game.status === "scheduled" && (
+                    <>
+                      <button
+                        onClick={() => handleStatusChange("in_progress")}
+                        className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
+                      >
+                        試合開始
+                      </button>
+                      <button
+                        onClick={() => handleStatusChange("cancelled")}
+                        className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                      >
+                        中止にする
+                      </button>
+                    </>
+                  )}
+                  {game.status === "in_progress" && (
+                    <button
+                      onClick={() => handleStatusChange("completed")}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    >
+                      試合終了
+                    </button>
+                  )}
+
+                  {/* スコア入力ボタン */}
+                  {(game.status === "in_progress" ||
+                    game.status === "completed") && (
+                    <Link
+                      href={`/games/${gameId}/score`}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      スコア入力
+                    </Link>
+                  )}
+
+                  {/* 編集・削除ボタン */}
                   <Link
-                    href={`/teams/${team.id}/edit`}
-                    className="px-4 py-2 bg-white text-blue-600 rounded-lg hover:bg-gray-100 transition-colors"
+                    href={`/games/${gameId}/edit`}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
                   >
                     編集
                   </Link>
                   <button
                     onClick={handleDelete}
-                    className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                   >
                     削除
                   </button>
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
 
-          {/* コンテンツ */}
-          <div className="p-6">
-            {/* 説明 */}
-            <div className="mb-8">
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">
-                チームの説明
-              </h2>
-              <p className="text-gray-600">
-                {team.description || "チームの説明はまだありません"}
+            {/* メタ情報 */}
+            <div className="mt-8 pt-6 border-t text-sm text-gray-500">
+              <p>
+                作成日時: {new Date(game.created_at).toLocaleString("ja-JP")}
               </p>
-            </div>
-
-            {/* アクション */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* 試合を作成 */}
-              <Link
-                href={`/games/create?teamId=${team.id}`}
-                className="flex items-center p-4 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
-              >
-                <svg
-                  className="w-8 h-8 text-green-600 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                  />
-                </svg>
-                <div>
-                  <h3 className="font-semibold text-gray-900">試合を作成</h3>
-                  <p className="text-sm text-gray-600">新しい試合を企画</p>
-                </div>
-              </Link>
-
-              {/* 試合履歴 */}
-              <Link
-                href={`/teams/${team.id}/games`}
-                className="flex items-center p-4 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
-              >
-                <svg
-                  className="w-8 h-8 text-blue-600 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                  />
-                </svg>
-                <div>
-                  <h3 className="font-semibold text-gray-900">試合履歴</h3>
-                  <p className="text-sm text-gray-600">過去の試合を見る</p>
-                </div>
-              </Link>
-
-              {/* メンバー管理 */}
-              {isOwner && (
-                <Link
-                  href={`/teams/${team.id}/members`}
-                  className="flex items-center p-4 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
-                >
-                  <svg
-                    className="w-8 h-8 text-purple-600 mr-3"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-                    />
-                  </svg>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">
-                      メンバー管理
-                    </h3>
-                    <p className="text-sm text-gray-600">
-                      メンバーを招待・管理
-                    </p>
-                  </div>
-                </Link>
-              )}
-            </div>
-
-            {/* チーム情報 */}
-            <div className="mt-8 pt-8 border-t border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                チーム情報
-              </h2>
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <dt className="text-sm text-gray-600">チームID</dt>
-                  <dd className="text-sm font-mono text-gray-900">{team.id}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-600">作成日時</dt>
-                  <dd className="text-sm text-gray-900">
-                    {new Date(team.created_at).toLocaleString("ja-JP")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-600">更新日時</dt>
-                  <dd className="text-sm text-gray-900">
-                    {new Date(team.updated_at).toLocaleString("ja-JP")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-600">オーナー</dt>
-                  <dd className="text-sm text-gray-900">
-                    {isOwner ? "あなた" : "その他のメンバー"}
-                  </dd>
-                </div>
-              </dl>
+              <p>
+                更新日時: {new Date(game.updated_at).toLocaleString("ja-JP")}
+              </p>
             </div>
           </div>
         </div>

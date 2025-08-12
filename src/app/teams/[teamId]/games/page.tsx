@@ -42,6 +42,7 @@ export default function TeamGamesPage({ params }: PageProps) {
   const [filter, setFilter] = useState<"all" | "scheduled" | "completed">(
     "all"
   );
+  const [isTeamMember, setIsTeamMember] = useState(false);
   const { user } = useAuth();
   const router = useRouter();
   const supabase = createClientComponentClient();
@@ -68,6 +69,20 @@ export default function TeamGamesPage({ params }: PageProps) {
       }
 
       setTeam(teamData);
+
+      // ユーザーがチームメンバーかチェック
+      let memberStatus = false;
+      if (user) {
+        const { data: memberData } = await supabase
+          .from("team_members")
+          .select("id")
+          .eq("team_id", teamId)
+          .eq("user_id", user.id)
+          .single();
+
+        memberStatus = !!memberData || teamData.owner_id === user.id;
+      }
+      setIsTeamMember(memberStatus);
 
       // チームの試合を取得
       const { data: gamesData, error: gamesError } = await supabase
@@ -216,14 +231,51 @@ export default function TeamGamesPage({ params }: PageProps) {
               </h1>
               <p className="text-gray-600 mt-1">全 {games.length} 試合</p>
             </div>
-            <Link
-              href={`/games/create?teamId=${teamId}`}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
-              新しい試合を作成
-            </Link>
+            {/* ログイン時のみ試合作成ボタンを表示 */}
+            {user && (
+              <Link
+                href={`/games/create?teamId=${teamId}`}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                新しい試合を作成
+              </Link>
+            )}
           </div>
         </div>
+
+        {/* メンバー以外への注意表示 */}
+        {!isTeamMember && !loading && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex">
+              <svg
+                className="w-5 h-5 text-yellow-600 mt-0.5 mr-2"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <div className="text-sm text-yellow-800">
+                <p className="font-semibold">閲覧制限のお知らせ</p>
+                <p>
+                  チームメンバー以外の方は、予定試合の詳細情報（日時・場所）は閲覧できません。
+                </p>
+                {user ? (
+                  <p>
+                    チームに参加することで、すべての情報を閲覧できるようになります。
+                  </p>
+                ) : (
+                  <p>
+                    ログインしてチームに参加すると、すべての情報を閲覧できるようになります。
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 統計カード */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
@@ -336,6 +388,7 @@ export default function TeamGamesPage({ params }: PageProps) {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
+                        {/* 日付は常に表示、時間は条件付き */}
                         <div className="flex items-center">
                           <svg
                             className="w-4 h-4 mr-1"
@@ -350,8 +403,18 @@ export default function TeamGamesPage({ params }: PageProps) {
                               d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
                             />
                           </svg>
-                          {new Date(game.game_date).toLocaleDateString("ja-JP")}
-                          {game.game_time && ` ${game.game_time}`}
+                          {game.status === "scheduled" && !isTeamMember ? (
+                            <span className="text-gray-400 italic">
+                              日時非公開
+                            </span>
+                          ) : (
+                            <>
+                              {new Date(game.game_date).toLocaleDateString(
+                                "ja-JP"
+                              )}
+                              {game.game_time && ` ${game.game_time}`}
+                            </>
+                          )}
                         </div>
 
                         <div className="flex items-center">
@@ -371,6 +434,7 @@ export default function TeamGamesPage({ params }: PageProps) {
                           vs {game.opponent_name}
                         </div>
 
+                        {/* 場所は予定試合では条件付き表示 */}
                         {game.location && (
                           <div className="flex items-center">
                             <svg
@@ -386,7 +450,13 @@ export default function TeamGamesPage({ params }: PageProps) {
                                 d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
                               />
                             </svg>
-                            {game.location}
+                            {game.status === "scheduled" && !isTeamMember ? (
+                              <span className="text-gray-400 italic">
+                                場所非公開
+                              </span>
+                            ) : (
+                              game.location
+                            )}
                           </div>
                         )}
                       </div>
