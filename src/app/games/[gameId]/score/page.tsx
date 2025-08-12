@@ -99,16 +99,44 @@ export default function ScoreInputPage({ params }: PageProps) {
 
       setCanEdit(isOwner || teamOwner?.owner_id === user?.id);
 
-      // イニングスコアを初期化（7回まで）
-      const initialInnings: InningScore[] = [];
-      for (let i = 1; i <= 7; i++) {
-        initialInnings.push({
-          inning: i,
-          top: null,
-          bottom: null,
-        });
+      // 既存のイニングスコアを取得
+      const { data: existingScores, error: scoresError } = await supabase
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("inning", { ascending: true });
+
+      if (existingScores && existingScores.length > 0) {
+        // 既存のスコアがある場合
+        const maxInning = Math.max(...existingScores.map((s) => s.inning), 7);
+        const loadedInnings: InningScore[] = [];
+
+        // 先攻/後攻の設定を取得
+        if (existingScores[0].is_my_team_bat_first !== undefined) {
+          setIsMyTeamBatFirst(existingScores[0].is_my_team_bat_first);
+        }
+
+        for (let i = 1; i <= maxInning; i++) {
+          const existingScore = existingScores.find((s) => s.inning === i);
+          loadedInnings.push({
+            inning: i,
+            top: existingScore?.top_score ?? null,
+            bottom: existingScore?.bottom_score ?? null,
+          });
+        }
+        setInnings(loadedInnings);
+      } else {
+        // 新規の場合は7回まで初期化
+        const initialInnings: InningScore[] = [];
+        for (let i = 1; i <= 7; i++) {
+          initialInnings.push({
+            inning: i,
+            top: null,
+            bottom: null,
+          });
+        }
+        setInnings(initialInnings);
       }
-      setInnings(initialInnings);
 
       // 試合が開始されていない場合は開始状態に更新
       if (gameData.status === "scheduled") {
@@ -176,7 +204,7 @@ export default function ScoreInputPage({ params }: PageProps) {
       const opponentScore = isMyTeamBatFirst ? bottomTotal : topTotal;
 
       // 試合のスコアを更新
-      const { error } = await supabase
+      const { error: gameError } = await supabase
         .from("games")
         .update({
           home_score: myTeamScore,
@@ -185,8 +213,34 @@ export default function ScoreInputPage({ params }: PageProps) {
         })
         .eq("id", gameId);
 
-      if (error) {
-        throw error;
+      if (gameError) {
+        throw gameError;
+      }
+
+      // イニングごとのスコアを保存
+      for (const inning of innings) {
+        if (inning.top !== null || inning.bottom !== null) {
+          // 既存のスコアを更新または新規作成
+          const { error: scoreError } = await supabase
+            .from("game_scores")
+            .upsert(
+              {
+                game_id: gameId,
+                inning: inning.inning,
+                top_score: inning.top || 0,
+                bottom_score: inning.bottom || 0,
+                is_my_team_bat_first: isMyTeamBatFirst,
+                updated_at: new Date().toISOString(),
+              },
+              {
+                onConflict: "game_id,inning",
+              }
+            );
+
+          if (scoreError) {
+            console.error("イニングスコア保存エラー:", scoreError);
+          }
+        }
       }
 
       alert("スコアを保存しました");
@@ -213,7 +267,7 @@ export default function ScoreInputPage({ params }: PageProps) {
       const myTeamScore = isMyTeamBatFirst ? topTotal : bottomTotal;
       const opponentScore = isMyTeamBatFirst ? bottomTotal : topTotal;
 
-      const { error } = await supabase
+      const { error: gameError } = await supabase
         .from("games")
         .update({
           home_score: myTeamScore,
@@ -223,7 +277,32 @@ export default function ScoreInputPage({ params }: PageProps) {
         })
         .eq("id", gameId);
 
-      if (error) throw error;
+      if (gameError) throw gameError;
+
+      // イニングごとのスコアを保存
+      for (const inning of innings) {
+        if (inning.top !== null || inning.bottom !== null) {
+          const { error: scoreError } = await supabase
+            .from("game_scores")
+            .upsert(
+              {
+                game_id: gameId,
+                inning: inning.inning,
+                top_score: inning.top || 0,
+                bottom_score: inning.bottom || 0,
+                is_my_team_bat_first: isMyTeamBatFirst,
+                updated_at: new Date().toISOString(),
+              },
+              {
+                onConflict: "game_id,inning",
+              }
+            );
+
+          if (scoreError) {
+            console.error("イニングスコア保存エラー:", scoreError);
+          }
+        }
+      }
 
       alert("試合を終了しました");
       router.push(`/games/${gameId}`);
