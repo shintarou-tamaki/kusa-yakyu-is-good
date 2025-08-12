@@ -7,14 +7,22 @@ function PublicHeader() {
           <div className="flex items-center space-x-8">
             <a href="/" className="flex items-center space-x-2">
               <span className="text-2xl">⚾️</span>
-              <span className="text-xl font-bold text-gray-900">草野球スコア</span>
+              <span className="text-xl font-bold text-gray-900">
+                草野球 is Good
+              </span>
             </a>
-            
+
             <nav className="hidden md:flex space-x-6">
-              <a href="/search/games" className="text-gray-600 hover:text-gray-900 transition-colors">
+              <a
+                href="/search/games"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+              >
                 試合検索
               </a>
-              <a href="/search/teams" className="text-gray-600 hover:text-gray-900 transition-colors">
+              <a
+                href="/search/teams"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+              >
                 チーム検索
               </a>
             </nav>

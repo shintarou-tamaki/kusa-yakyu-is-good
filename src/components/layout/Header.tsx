@@ -1,9 +1,9 @@
 "use client";
 
-import React from 'react';
-import Link from 'next/link';
-import { useAuth } from '../auth/AuthProvider';
-import { useRouter } from 'next/navigation';
+import React from "react";
+import Link from "next/link";
+import { useAuth } from "../auth/AuthProvider";
+import { useRouter } from "next/navigation";
 
 export function Header() {
   const { user, profile, signOut } = useAuth();
@@ -12,9 +12,9 @@ export function Header() {
   const handleSignOut = async () => {
     try {
       await signOut();
-      router.push('/');
+      router.push("/");
     } catch (error) {
-      console.error('ログアウトエラー:', error);
+      console.error("ログアウトエラー:", error);
     }
   };
 
@@ -26,22 +26,36 @@ export function Header() {
           <div className="flex items-center space-x-8">
             <Link href="/" className="flex items-center space-x-2">
               <span className="text-2xl">⚾️</span>
-              <span className="text-xl font-bold text-gray-900">草野球スコア</span>
+              <span className="text-xl font-bold text-gray-900">
+                草野球 is Good
+              </span>
             </Link>
-            
+
             <nav className="hidden md:flex space-x-6">
-              <Link href="/search/games" className="text-gray-600 hover:text-gray-900 transition-colors">
+              <Link
+                href="/search/games"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+              >
                 試合検索
               </Link>
-              <Link href="/search/teams" className="text-gray-600 hover:text-gray-900 transition-colors">
+              <Link
+                href="/search/teams"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+              >
                 チーム検索
               </Link>
               {user && (
                 <>
-                  <Link href="/dashboard" className="text-gray-600 hover:text-gray-900 transition-colors">
+                  <Link
+                    href="/dashboard"
+                    className="text-gray-600 hover:text-gray-900 transition-colors"
+                  >
                     ダッシュボード
                   </Link>
-                  <Link href="/teams" className="text-gray-600 hover:text-gray-900 transition-colors">
+                  <Link
+                    href="/teams"
+                    className="text-gray-600 hover:text-gray-900 transition-colors"
+                  >
                     マイチーム
                   </Link>
                 </>
@@ -56,12 +70,12 @@ export function Header() {
                 {profile?.avatar_url && (
                   <img
                     src={profile.avatar_url}
-                    alt={profile.display_name || ''}
+                    alt={profile.display_name || ""}
                     className="w-8 h-8 rounded-full"
                   />
                 )}
                 <span className="text-sm font-medium text-gray-700 hidden sm:block">
-                  {profile?.display_name || user.email?.split('@')[0]}
+                  {profile?.display_name || user.email?.split("@")[0]}
                 </span>
                 <button
                   onClick={handleSignOut}
