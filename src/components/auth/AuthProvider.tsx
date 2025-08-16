@@ -5,7 +5,6 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { User } from "@supabase/supabase-js";
 import { useRouter } from "next/navigation";
 
-// AuthContextの型定義
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -16,10 +15,8 @@ interface AuthContextType {
   signInWithGitHub: () => Promise<void>;
 }
 
-// コンテキストの作成
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// AuthProviderコンポーネント
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,7 +24,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClientComponentClient();
 
   useEffect(() => {
-    // 初期認証状態をチェック
     const checkUser = async () => {
       try {
         const {
@@ -43,14 +39,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     checkUser();
 
-    // 認証状態の変更を監視
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
 
-      // ログイン成功時のみリダイレクト（初回ログイン時のみ）
       if (event === "SIGNED_IN" && window.location.pathname === "/login") {
         router.push("/dashboard");
       }
@@ -61,7 +55,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [supabase, router]);
 
-  // メール/パスワードでサインイン
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -71,7 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push("/dashboard");
   };
 
-  // Googleでサインイン
   const signInWithGoogle = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -91,7 +83,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // GitHubでサインイン
   const signInWithGitHub = async () => {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -107,14 +98,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // サインアウト
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
     router.push("/");
   };
 
-  // サインアップ
   const signUp = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({
       email,
@@ -139,7 +128,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// useAuthフック
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {

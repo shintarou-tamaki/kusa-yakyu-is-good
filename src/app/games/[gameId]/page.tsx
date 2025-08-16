@@ -37,7 +37,6 @@ interface PageProps {
 }
 
 export default function GameDetailPage({ params }: PageProps) {
-  // React.use()でparamsを解決
   const resolvedParams = use(params);
   const gameId = resolvedParams.gameId;
 
@@ -46,6 +45,8 @@ export default function GameDetailPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
+  const [canViewDetails, setCanViewDetails] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const { user } = useAuth();
   const router = useRouter();
   const supabase = createClientComponentClient();
@@ -84,22 +85,60 @@ export default function GameDetailPage({ params }: PageProps) {
 
         if (teamData) {
           setTeam(teamData);
-          // チームオーナーも編集可能
-          const { data: teamOwner } = await supabase
-            .from("teams")
-            .select("owner_id")
-            .eq("id", gameData.home_team_id)
+        }
+      }
+
+      // アクセス権限のチェック
+      let hasAccess = false;
+      let canEditGame = false;
+
+      // 1. 試合作成者
+      if (gameData.created_by === user?.id) {
+        hasAccess = true;
+        canEditGame = true;
+      }
+
+      // 2. チームメンバー/オーナーのチェック
+      if (gameData.home_team_id && user) {
+        // チームオーナーかチェック
+        const { data: teamOwner } = await supabase
+          .from("teams")
+          .select("owner_id")
+          .eq("id", gameData.home_team_id)
+          .single();
+
+        if (teamOwner?.owner_id === user.id) {
+          hasAccess = true;
+          canEditGame = true;
+        } else {
+          // チームメンバーかチェック
+          const { data: memberCheck } = await supabase
+            .from("team_members")
+            .select("id")
+            .eq("team_id", gameData.home_team_id)
+            .eq("user_id", user.id)
             .single();
 
-          setCanEdit(
-            gameData.created_by === user?.id || teamOwner?.owner_id === user?.id
-          );
-        } else {
-          setCanEdit(gameData.created_by === user?.id);
+          if (memberCheck) {
+            hasAccess = true;
+          }
         }
-      } else {
-        setCanEdit(gameData.created_by === user?.id);
       }
+
+      // 3. 完了した試合は誰でも閲覧可能
+      if (gameData.status === "completed" && gameData.is_public) {
+        hasAccess = true;
+      }
+
+      // 4. 公開試合で完了していない場合はチーム関係者のみ
+      if (gameData.status !== "completed" && !hasAccess) {
+        setAccessError("この試合はチーム関係者のみ閲覧できます");
+        setCanViewDetails(false);
+      } else {
+        setCanViewDetails(true);
+      }
+
+      setCanEdit(canEditGame);
     } catch (error) {
       console.error("試合取得エラー:", error);
       router.push("/dashboard");
@@ -197,6 +236,67 @@ export default function GameDetailPage({ params }: PageProps) {
           <Link href="/dashboard" className="text-blue-600 hover:text-blue-700">
             ダッシュボードに戻る
           </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // アクセス権限がない場合
+  if (!canViewDetails) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+            <svg
+              className="mx-auto h-12 w-12 text-gray-400 mb-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+            <h2 className="text-xl font-semibold text-gray-900 mb-2">
+              アクセス制限
+            </h2>
+            <p className="text-gray-600 mb-6">{accessError}</p>
+            {!user ? (
+              <div>
+                <p className="text-sm text-gray-500 mb-4">
+                  ログインすることで、所属チームの試合を閲覧できます
+                </p>
+                <Link
+                  href={`/login?redirect=/games/${gameId}`}
+                  className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  ログインする
+                </Link>
+              </div>
+            ) : team ? (
+              <div>
+                <p className="text-sm text-gray-500 mb-4">
+                  チームに参加すると、予定試合の詳細を閲覧できます
+                </p>
+                <Link
+                  href={`/teams/${team.id}`}
+                  className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  チームページへ
+                </Link>
+              </div>
+            ) : (
+              <Link
+                href="/dashboard"
+                className="inline-block px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+              >
+                ダッシュボードに戻る
+              </Link>
+            )}
+          </div>
         </div>
       </div>
     );

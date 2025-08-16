@@ -19,7 +19,6 @@ export default function Header() {
     <header className="bg-white shadow-sm border-b">
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-          {/* ロゴ・サイト名 */}
           <div className="flex items-center">
             <Link
               href={user ? "/dashboard" : "/"}
@@ -29,7 +28,6 @@ export default function Header() {
             </Link>
           </div>
 
-          {/* ナビゲーションメニュー */}
           <div className="hidden md:flex items-center space-x-8">
             {user && (
               <>
@@ -67,7 +65,6 @@ export default function Header() {
             </Link>
           </div>
 
-          {/* ユーザーメニュー */}
           <div className="flex items-center space-x-4">
             {loading ? (
               <div className="text-gray-400">読み込み中...</div>

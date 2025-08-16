@@ -6,191 +6,317 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+interface Team {
+  id: string;
+  name: string;
+  description: string | null;
+  prefecture: string | null;
+  city: string | null;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TeamMember {
+  id: string;
+  user_id: string;
+  role: string;
+  joined_at: string;
+  user_profiles: {
+    id: string;
+    display_name: string | null;
+  } | null;
+}
+
+interface JoinRequest {
+  id: string;
+  user_id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  message: string | null;
+  requested_at: string;
+  user_profiles?: {
+    id: string;
+    display_name: string | null;
+  };
+}
+
 interface Game {
   id: string;
   name: string;
   game_date: string;
   game_time: string | null;
   location: string | null;
-  description: string | null;
-  home_team_id: string | null;
   opponent_name: string;
   status: "scheduled" | "in_progress" | "completed" | "cancelled";
   home_score: number;
   opponent_score: number;
-  record_type: "team" | "personal";
-  is_public: boolean;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface Team {
-  id: string;
-  name: string;
 }
 
 interface PageProps {
   params: Promise<{
-    gameId: string;
+    teamId: string;
   }>;
 }
 
-export default function GameDetailPage({ params }: PageProps) {
-  // React.use()でparamsを解決
+export default function TeamDetailPage({ params }: PageProps) {
   const resolvedParams = use(params);
-  const gameId = resolvedParams.gameId;
+  const teamId = resolvedParams.teamId;
 
-  const [game, setGame] = useState<Game | null>(null);
   const [team, setTeam] = useState<Team | null>(null);
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+  const [completedGames, setCompletedGames] = useState<Game[]>([]);
+  const [upcomingGames, setUpcomingGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
-  const [canEdit, setCanEdit] = useState(false);
-  const [isTeamMember, setIsTeamMember] = useState(false);
+  const [isMember, setIsMember] = useState(false);
+  const [hasRequestPending, setHasRequestPending] = useState(false);
+  const [joinMessage, setJoinMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const { user } = useAuth();
   const router = useRouter();
   const supabase = createClientComponentClient();
 
   useEffect(() => {
-    if (gameId) {
-      fetchGame();
+    if (teamId) {
+      fetchTeamData();
     }
-  }, [gameId, user]);
+  }, [teamId, user]);
 
-  const fetchGame = async () => {
+  const fetchTeamData = async () => {
     try {
-      // 試合情報を取得
-      const { data: gameData, error: gameError } = await supabase
-        .from("games")
+      // チーム情報を取得
+      const { data: teamData, error: teamError } = await supabase
+        .from("teams")
         .select("*")
-        .eq("id", gameId)
+        .eq("id", teamId)
         .single();
 
-      if (gameError || !gameData) {
-        console.error("試合取得エラー:", gameError);
-        router.push("/dashboard");
+      if (teamError || !teamData) {
+        console.error("チーム取得エラー:", teamError);
+        router.push("/teams");
         return;
       }
 
-      setGame(gameData);
-      setIsOwner(gameData.created_by === user?.id);
+      setTeam(teamData);
 
-      // チーム情報を取得（存在する場合）
-      if (gameData.home_team_id) {
-        const { data: teamData } = await supabase
-          .from("teams")
-          .select("id, name")
-          .eq("id", gameData.home_team_id)
+      // 完了した試合を取得（全員閲覧可能）
+      const { data: completedData } = await supabase
+        .from("games")
+        .select("*")
+        .eq("home_team_id", teamId)
+        .eq("status", "completed")
+        .order("game_date", { ascending: false })
+        .limit(5);
+
+      if (completedData) {
+        setCompletedGames(completedData);
+      }
+
+      // ログインしている場合のみ、メンバー情報や参加申請を取得
+      if (user) {
+        setIsOwner(teamData.owner_id === user.id);
+
+        // メンバーかどうかチェック
+        const { data: memberCheck } = await supabase
+          .from("team_members")
+          .select("id")
+          .eq("team_id", teamId)
+          .eq("user_id", user.id)
           .single();
 
-        if (teamData) {
-          setTeam(teamData);
+        const isTeamMember = !!memberCheck || teamData.owner_id === user.id;
+        setIsMember(isTeamMember);
 
-          // チームメンバーかチェック
-          if (user) {
-            const { data: memberData } = await supabase
-              .from("team_members")
-              .select("id")
-              .eq("team_id", gameData.home_team_id)
-              .eq("user_id", user.id)
-              .single();
+        // メンバーリストを取得（オーナーも含む）
+        if (isTeamMember) {
+          // まずメンバー情報を取得
+          const { data: membersData, error: membersError } = await supabase
+            .from("team_members")
+            .select("*")
+            .eq("team_id", teamId)
+            .order("joined_at", { ascending: true });
 
-            const { data: teamOwner } = await supabase
-              .from("teams")
-              .select("owner_id")
-              .eq("id", gameData.home_team_id)
-              .single();
+          console.log("メンバー取得結果:", membersData);
+          console.log("メンバー取得エラー:", membersError);
 
-            setIsTeamMember(!!memberData || teamOwner?.owner_id === user?.id);
-            setCanEdit(
-              gameData.created_by === user?.id ||
-                teamOwner?.owner_id === user?.id
-            );
+          if (membersData) {
+            // メンバーのuser_idリストを作成
+            const userIds = membersData.map(m => m.user_id);
+            
+            // user_profilesを別途取得（usernameフィールドを削除）
+            const { data: profiles, error: profilesError } = await supabase
+              .from("user_profiles")
+              .select("id, display_name")  // usernameを削除
+              .in("id", userIds);
+
+            console.log("プロファイル取得結果:", profiles);
+            console.log("プロファイル取得エラー:", profilesError);
+
+            // メンバー情報とプロファイルを結合
+            const membersWithProfiles = membersData.map(member => {
+              const profile = profiles?.find(p => p.id === member.user_id);
+              return {
+                ...member,
+                user_profiles: profile || null
+              };
+            });
+
+            setMembers(membersWithProfiles);
           }
-        } else {
-          setCanEdit(user ? gameData.created_by === user?.id : false);
+
+          // 今後の予定試合を取得
+          const { data: upcomingData } = await supabase
+            .from("games")
+            .select("*")
+            .eq("home_team_id", teamId)
+            .eq("status", "scheduled")
+            .gte("game_date", new Date().toISOString().split('T')[0])
+            .order("game_date", { ascending: true })
+            .limit(5);
+
+          if (upcomingData) {
+            setUpcomingGames(upcomingData);
+          }
         }
-      } else {
-        setCanEdit(user ? gameData.created_by === user?.id : false);
+
+        // オーナーの場合は参加申請を取得
+        if (teamData.owner_id === user.id) {
+          const { data: requestsData } = await supabase
+            .from("team_join_requests")
+            .select(`
+              *,
+              user_profiles!team_join_requests_user_id_fkey (
+                id,
+                display_name
+              )
+            `)
+            .eq("team_id", teamId)
+            .eq("status", "pending")
+            .order("requested_at", { ascending: false });
+
+          if (requestsData) {
+            setJoinRequests(requestsData);
+          }
+        }
+
+        // ユーザーが既に参加申請を送っているかチェック
+        if (!isTeamMember) {
+          const { data: existingRequest } = await supabase
+            .from("team_join_requests")
+            .select("id")
+            .eq("team_id", teamId)
+            .eq("user_id", user.id)
+            .eq("status", "pending")
+            .single();
+
+          setHasRequestPending(!!existingRequest);
+        }
       }
     } catch (error) {
-      console.error("試合取得エラー:", error);
-      router.push("/dashboard");
+      console.error("データ取得エラー:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!confirm("本当にこの試合を削除しますか？この操作は取り消せません。")) {
+  const handleJoinRequest = async () => {
+    if (!user) {
+      router.push("/login");
       return;
     }
 
+    setSubmitting(true);
     try {
-      const { error } = await supabase.from("games").delete().eq("id", gameId);
+      const { error } = await supabase.from("team_join_requests").insert({
+        team_id: teamId,
+        user_id: user.id,
+        message: joinMessage.trim() || null,
+        status: "pending",
+      });
 
       if (error) {
-        console.error("試合削除エラー:", error);
-        alert("試合の削除に失敗しました");
+        console.error("参加申請エラー:", error);
+        alert("参加申請の送信に失敗しました");
         return;
       }
 
-      router.push("/dashboard");
+      setHasRequestPending(true);
+      setJoinMessage("");
+      alert("参加申請を送信しました");
     } catch (error) {
-      console.error("試合削除エラー:", error);
-      alert("試合の削除に失敗しました");
+      console.error("参加申請エラー:", error);
+      alert("参加申請の送信に失敗しました");
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleStatusChange = async (newStatus: Game["status"]) => {
+  const handleApproveRequest = async (requestId: string, userId: string) => {
+    try {
+      // 参加申請を承認
+      const { error: updateError } = await supabase
+        .from("team_join_requests")
+        .update({
+          status: "approved",
+          responded_at: new Date().toISOString(),
+          responded_by: user?.id,
+        })
+        .eq("id", requestId);
+
+      if (updateError) {
+        console.error("承認エラー:", updateError);
+        alert("承認に失敗しました");
+        return;
+      }
+
+      // team_membersに追加
+      const { error: memberError } = await supabase
+        .from("team_members")
+        .insert({
+          team_id: teamId,
+          user_id: userId,
+          role: "player",
+        });
+
+      if (memberError) {
+        console.error("メンバー追加エラー:", memberError);
+        alert("メンバー追加に失敗しました");
+        return;
+      }
+
+      // リストを更新
+      fetchTeamData();
+      alert("参加申請を承認しました");
+    } catch (error) {
+      console.error("承認エラー:", error);
+      alert("承認に失敗しました");
+    }
+  };
+
+  const handleRejectRequest = async (requestId: string) => {
     try {
       const { error } = await supabase
-        .from("games")
+        .from("team_join_requests")
         .update({
-          status: newStatus,
-          updated_at: new Date().toISOString(),
+          status: "rejected",
+          responded_at: new Date().toISOString(),
+          responded_by: user?.id,
         })
-        .eq("id", gameId);
+        .eq("id", requestId);
 
       if (error) {
-        console.error("ステータス更新エラー:", error);
-        alert("ステータスの更新に失敗しました");
+        console.error("却下エラー:", error);
+        alert("却下に失敗しました");
         return;
       }
 
-      setGame((prev) => (prev ? { ...prev, status: newStatus } : null));
+      // リストを更新
+      setJoinRequests(joinRequests.filter((req) => req.id !== requestId));
+      alert("参加申請を却下しました");
     } catch (error) {
-      console.error("ステータス更新エラー:", error);
-    }
-  };
-
-  const getStatusColor = (status: Game["status"]) => {
-    switch (status) {
-      case "scheduled":
-        return "bg-blue-100 text-blue-800";
-      case "in_progress":
-        return "bg-yellow-100 text-yellow-800";
-      case "completed":
-        return "bg-green-100 text-green-800";
-      case "cancelled":
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
-  const getStatusText = (status: Game["status"]) => {
-    switch (status) {
-      case "scheduled":
-        return "予定";
-      case "in_progress":
-        return "進行中";
-      case "completed":
-        return "終了";
-      case "cancelled":
-        return "中止";
-      default:
-        return status;
+      console.error("却下エラー:", error);
+      alert("却下に失敗しました");
     }
   };
 
@@ -202,13 +328,13 @@ export default function GameDetailPage({ params }: PageProps) {
     );
   }
 
-  if (!game) {
+  if (!team) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600 mb-4">試合が見つかりません</p>
-          <Link href="/dashboard" className="text-blue-600 hover:text-blue-700">
-            ダッシュボードに戻る
+          <p className="text-gray-600 mb-4">チームが見つかりません</p>
+          <Link href="/teams" className="text-blue-600 hover:text-blue-700">
+            チーム一覧に戻る
           </Link>
         </div>
       </div>
@@ -221,7 +347,7 @@ export default function GameDetailPage({ params }: PageProps) {
         {/* 戻るボタン */}
         <div className="mb-6">
           <Link
-            href={team ? `/teams/${team.id}` : "/dashboard"}
+            href="/teams"
             className="inline-flex items-center text-gray-600 hover:text-gray-900"
           >
             <svg
@@ -234,247 +360,260 @@ export default function GameDetailPage({ params }: PageProps) {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M15 19l-7-7 7-7"
+                d="M10 19l-7-7m0 0l7-7m-7 7h18"
               />
             </svg>
-            {team ? "チーム詳細に戻る" : "ダッシュボードに戻る"}
+            チーム一覧に戻る
           </Link>
         </div>
 
-        {/* 試合情報カード */}
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-          {/* ヘッダー */}
-          <div className="bg-gradient-to-r from-green-500 to-green-600 px-6 py-8">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-white mb-2">
-                  {game.name}
-                </h1>
-                <div className="flex items-center space-x-4 text-green-100">
-                  <span className="flex items-center">
-                    <svg
-                      className="w-5 h-5 mr-1"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                      />
-                    </svg>
-                    {new Date(game.game_date).toLocaleDateString("ja-JP")}
-                  </span>
-                  {game.game_time && (
-                    <span className="flex items-center">
-                      <svg
-                        className="w-5 h-5 mr-1"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      {game.game_time}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <span
-                  className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(
-                    game.status
-                  )}`}
-                >
-                  {getStatusText(game.status)}
-                </span>
-                {game.record_type === "personal" && (
-                  <span className="px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
-                    個人記録
-                  </span>
-                )}
-              </div>
+        {/* チーム情報 */}
+        <div className="bg-white shadow rounded-lg p-6 mb-6">
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {team.name}
+              </h1>
+              {(team.prefecture || team.city) && (
+                <p className="text-sm text-gray-600 mb-2">
+                  活動地域: {team.prefecture || ""} {team.city || ""}
+                </p>
+              )}
+              <p className="text-gray-600">{team.description}</p>
             </div>
+            {isOwner && (
+              <div className="flex gap-2">
+                <Link
+                  href={`/teams/${teamId}/edit`}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  チーム編集
+                </Link>
+                <Link
+                  href={`/teams/${teamId}/games`}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  試合管理
+                </Link>
+              </div>
+            )}
           </div>
+        </div>
 
-          {/* スコアボード */}
-          {(game.status === "in_progress" || game.status === "completed") && (
-            <div className="bg-gray-900 text-white p-6">
-              <div className="grid grid-cols-3 gap-4 items-center text-center">
-                <div>
-                  <div className="text-gray-400 text-sm mb-1">HOME</div>
-                  <div className="text-2xl font-bold">
-                    {team?.name || "ホーム"}
-                  </div>
-                </div>
-                <div className="text-4xl font-bold">
-                  <span>{game.home_score}</span>
-                  <span className="mx-4 text-gray-500">-</span>
-                  <span>{game.opponent_score}</span>
-                </div>
-                <div>
-                  <div className="text-gray-400 text-sm mb-1">AWAY</div>
-                  <div className="text-2xl font-bold">{game.opponent_name}</div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* メンバー一覧 */}
+          {isMember && (
+            <div className="lg:col-span-1">
+              <div className="bg-white shadow rounded-lg p-6">
+                <h2 className="text-xl font-bold text-gray-900 mb-4">
+                  メンバー
+                </h2>
+                <div className="space-y-2">
+                  {members.map((member) => (
+                    <div
+                      key={member.id}
+                      className="flex justify-between items-center py-2 border-b last:border-b-0"
+                    >
+                      <span className="text-gray-700">
+                        {member.user_profiles?.display_name || "名前未設定"}
+                      </span>
+                      <span className="text-sm text-gray-500">
+                        {member.role === "owner" ? "オーナー" : "メンバー"}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
           )}
 
-          {/* 詳細情報 */}
-          <div className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              {/* 基本情報 */}
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  試合情報
-                </h2>
-                <dl className="space-y-3">
-                  {/* 場所 - 予定試合では条件付き表示 */}
-                  {game.location && (
-                    <div>
-                      <dt className="text-sm text-gray-600">場所</dt>
-                      <dd className="text-gray-900 flex items-center mt-1">
-                        <svg
-                          className="w-4 h-4 mr-1 text-gray-400"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                          />
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                          />
-                        </svg>
-                        {game.status === "scheduled" &&
-                        !isTeamMember &&
-                        game.home_team_id ? (
-                          <span className="text-gray-400 italic">
-                            チームメンバーのみ閲覧可能
-                          </span>
-                        ) : (
-                          game.location
-                        )}
-                      </dd>
-                    </div>
-                  )}
-                  <div>
-                    <dt className="text-sm text-gray-600">対戦相手</dt>
-                    <dd className="text-gray-900 mt-1">{game.opponent_name}</dd>
-                  </div>
-                  {team && (
-                    <div>
-                      <dt className="text-sm text-gray-600">チーム</dt>
-                      <dd className="mt-1">
-                        <Link
-                          href={`/teams/${team.id}`}
-                          className="text-blue-600 hover:text-blue-700"
-                        >
-                          {team.name}
-                        </Link>
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </div>
-
-              {/* メモ・備考 */}
-              {game.description && (
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                    メモ・備考
+          {/* 試合情報 */}
+          <div className={isMember ? "lg:col-span-2" : "lg:col-span-3"}>
+            {/* 予定試合（メンバーのみ） */}
+            {isMember && upcomingGames.length > 0 && (
+              <div className="bg-white shadow rounded-lg p-6 mb-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold text-gray-900">
+                    今後の予定
                   </h2>
-                  <p className="text-gray-700 whitespace-pre-wrap">
-                    {game.description}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* アクションボタン */}
-            {canEdit && (
-              <div className="border-t pt-6">
-                <div className="flex flex-wrap gap-2">
-                  {/* ステータス変更ボタン */}
-                  {game.status === "scheduled" && (
-                    <>
-                      <button
-                        onClick={() => handleStatusChange("in_progress")}
-                        className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
-                      >
-                        試合開始
-                      </button>
-                      <button
-                        onClick={() => handleStatusChange("cancelled")}
-                        className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                      >
-                        中止にする
-                      </button>
-                    </>
-                  )}
-                  {game.status === "in_progress" && (
-                    <button
-                      onClick={() => handleStatusChange("completed")}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                    >
-                      試合終了
-                    </button>
-                  )}
-
-                  {/* スコア入力ボタン */}
-                  {(game.status === "in_progress" ||
-                    game.status === "completed") && (
-                    <Link
-                      href={`/games/${gameId}/score`}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                    >
-                      スコア入力
-                    </Link>
-                  )}
-
-                  {/* 編集・削除ボタン */}
                   <Link
-                    href={`/games/${gameId}/edit`}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                    href="/games/new"
+                    className="text-blue-600 hover:text-blue-700 text-sm"
                   >
-                    編集
+                    新規試合作成 →
                   </Link>
-                  <button
-                    onClick={handleDelete}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                  >
-                    削除
-                  </button>
+                </div>
+                <div className="space-y-3">
+                  {upcomingGames.map((game) => (
+                    <Link
+                      key={game.id}
+                      href={`/games/${game.id}`}
+                      className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-semibold text-gray-900">
+                            {game.name}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {new Date(game.game_date).toLocaleDateString(
+                              "ja-JP"
+                            )}{" "}
+                            {game.game_time || ""}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            vs {game.opponent_name}
+                          </p>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* メタ情報 */}
-            <div className="mt-8 pt-6 border-t text-sm text-gray-500">
-              <p>
-                作成日時: {new Date(game.created_at).toLocaleString("ja-JP")}
-              </p>
-              <p>
-                更新日時: {new Date(game.updated_at).toLocaleString("ja-JP")}
-              </p>
-            </div>
+            {/* 完了試合（全員閲覧可能） */}
+            {completedGames.length > 0 && (
+              <div className="bg-white shadow rounded-lg p-6">
+                <h2 className="text-xl font-bold text-gray-900 mb-4">
+                  最近の試合結果
+                </h2>
+                <div className="space-y-3">
+                  {completedGames.map((game) => (
+                    <Link
+                      key={game.id}
+                      href={`/games/${game.id}`}
+                      className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-semibold text-gray-900">
+                            {game.name}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {new Date(game.game_date).toLocaleDateString(
+                              "ja-JP"
+                            )}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            vs {game.opponent_name}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span
+                            className={
+                              game.home_score > game.opponent_score
+                                ? "text-blue-600 font-bold"
+                                : "text-gray-900"
+                            }
+                          >
+                            {game.home_score}
+                          </span>
+                          <span className="mx-2 text-gray-400">-</span>
+                          <span
+                            className={
+                              game.opponent_score > game.home_score
+                                ? "text-red-600 font-bold"
+                                : "text-gray-900"
+                            }
+                          >
+                            {game.opponent_score}
+                          </span>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* 参加申請フォーム（非メンバー） */}
+        {user && !isMember && !hasRequestPending && (
+          <div className="mt-6 bg-white shadow rounded-lg p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">
+              チーム参加申請
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  メッセージ（任意）
+                </label>
+                <textarea
+                  value={joinMessage}
+                  onChange={(e) => setJoinMessage(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={3}
+                  placeholder="自己紹介やアピールポイントなど"
+                />
+              </div>
+              <button
+                onClick={handleJoinRequest}
+                disabled={submitting}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {submitting ? "送信中..." : "参加申請を送る"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 申請済みメッセージ */}
+        {hasRequestPending && (
+          <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <p className="text-blue-700">参加申請を送信済みです。承認をお待ちください。</p>
+          </div>
+        )}
+
+        {/* 参加申請一覧（オーナーのみ） */}
+        {isOwner && joinRequests.length > 0 && (
+          <div className="mt-6 bg-white shadow rounded-lg p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">
+              参加申請
+            </h2>
+            <div className="space-y-4">
+              {joinRequests.map((request) => (
+                <div
+                  key={request.id}
+                  className="border rounded-lg p-4 bg-gray-50"
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="font-semibold text-gray-900">
+                        {request.user_profiles?.display_name || "名前未設定"}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        {new Date(request.requested_at).toLocaleDateString(
+                          "ja-JP"
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() =>
+                          handleApproveRequest(request.id, request.user_id)
+                        }
+                        className="px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors"
+                      >
+                        承認
+                      </button>
+                      <button
+                        onClick={() => handleRejectRequest(request.id)}
+                        className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+                      >
+                        却下
+                      </button>
+                    </div>
+                  </div>
+                  {request.message && (
+                    <p className="text-gray-600 mt-2">{request.message}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

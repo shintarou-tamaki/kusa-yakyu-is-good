@@ -2,14 +2,15 @@
 
 import React, { useState, useEffect } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useAuth } from "@/components/auth/AuthProvider";
 import Link from "next/link";
 
 interface Game {
   id: string;
-  name: string; // titleではなくname
-  game_date: string; // dateではなくgame_date
-  game_time: string | null; // start_timeではなくgame_time
-  location: string | null; // venueではなくlocation
+  name: string;
+  game_date: string;
+  game_time: string | null;
+  location: string | null;
   opponent_name: string;
   status: string;
   home_score: number;
@@ -17,6 +18,7 @@ interface Game {
   record_type: string;
   is_public: boolean;
   created_at: string;
+  home_team_id: string | null;
 }
 
 interface SearchFilters {
@@ -30,6 +32,7 @@ export default function PublicGameSearch() {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [userTeamIds, setUserTeamIds] = useState<string[]>([]);
   const [filters, setFilters] = useState<SearchFilters>({
     keyword: "",
     status: "",
@@ -37,53 +40,154 @@ export default function PublicGameSearch() {
     dateTo: "",
   });
 
+  const { user } = useAuth();
   const supabase = createClientComponentClient();
 
   useEffect(() => {
+    fetchUserTeams();
+  }, [user]);
+
+  useEffect(() => {
     fetchGames();
-  }, [filters]);
+  }, [filters, userTeamIds]);
+
+  const fetchUserTeams = async () => {
+    if (!user) {
+      setUserTeamIds([]);
+      return;
+    }
+
+    try {
+      const teamIds: string[] = [];
+
+      // オーナーとして所有するチーム
+      const { data: ownedTeams } = await supabase
+        .from("teams")
+        .select("id")
+        .eq("owner_id", user.id);
+
+      if (ownedTeams) {
+        ownedTeams.forEach(team => teamIds.push(team.id));
+      }
+
+      // メンバーとして所属するチーム
+      const { data: memberTeams } = await supabase
+        .from("team_members")
+        .select("team_id")
+        .eq("user_id", user.id);
+
+      if (memberTeams) {
+        memberTeams.forEach(member => {
+          if (!teamIds.includes(member.team_id)) {
+            teamIds.push(member.team_id);
+          }
+        });
+      }
+
+      setUserTeamIds(teamIds);
+    } catch (error) {
+      console.error("チーム情報取得エラー:", error);
+    }
+  };
 
   const fetchGames = async () => {
     try {
       setError(null);
+      setLoading(true);
 
-      let query = supabase
+      let allGames: Game[] = [];
+
+      // 1. 完了した公開試合を取得（全ユーザー向け）
+      let completedQuery = supabase
         .from("games")
         .select("*")
-        .eq("is_public", true) // 公開試合のみ
+        .eq("is_public", true)
+        .eq("status", "completed")
         .order("game_date", { ascending: false });
 
       // フィルター適用
       if (filters.keyword) {
-        query = query.or(
+        completedQuery = completedQuery.or(
           `name.ilike.%${filters.keyword}%,location.ilike.%${filters.keyword}%,opponent_name.ilike.%${filters.keyword}%`
         );
       }
 
-      if (filters.status) {
-        query = query.eq("status", filters.status);
-      }
-
       if (filters.dateFrom) {
-        query = query.gte("game_date", filters.dateFrom);
+        completedQuery = completedQuery.gte("game_date", filters.dateFrom);
       }
 
       if (filters.dateTo) {
-        query = query.lte("game_date", filters.dateTo);
+        completedQuery = completedQuery.lte("game_date", filters.dateTo);
       }
 
-      const { data, error: fetchError } = await query.limit(50);
+      const { data: completedGames, error: completedError } = await completedQuery.limit(50);
 
-      if (fetchError) {
-        console.error("試合検索エラー詳細:", fetchError);
-        setError(`エラー: ${fetchError.message}`);
-        setGames([]);
-      } else {
-        console.log("取得した試合数:", data?.length);
-        setGames(data || []);
+      if (completedError) {
+        console.error("完了試合取得エラー:", completedError);
+        setError(`エラー: ${completedError.message}`);
+      } else if (completedGames) {
+        allGames = [...completedGames];
       }
+
+      // 2. ユーザーが所属するチームの全試合を取得（ログインユーザーのみ）
+      if (user && userTeamIds.length > 0) {
+        let teamGamesQuery = supabase
+          .from("games")
+          .select("*")
+          .in("home_team_id", userTeamIds)
+          .eq("is_public", true)
+          .order("game_date", { ascending: false });
+
+        // フィルター適用
+        if (filters.keyword) {
+          teamGamesQuery = teamGamesQuery.or(
+            `name.ilike.%${filters.keyword}%,location.ilike.%${filters.keyword}%,opponent_name.ilike.%${filters.keyword}%`
+          );
+        }
+
+        if (filters.status) {
+          teamGamesQuery = teamGamesQuery.eq("status", filters.status);
+        }
+
+        if (filters.dateFrom) {
+          teamGamesQuery = teamGamesQuery.gte("game_date", filters.dateFrom);
+        }
+
+        if (filters.dateTo) {
+          teamGamesQuery = teamGamesQuery.lte("game_date", filters.dateTo);
+        }
+
+        const { data: teamGames, error: teamError } = await teamGamesQuery.limit(50);
+
+        if (teamError) {
+          console.error("チーム試合取得エラー:", teamError);
+        } else if (teamGames) {
+          // 重複を除いて追加
+          const existingIds = new Set(allGames.map(g => g.id));
+          teamGames.forEach(game => {
+            if (!existingIds.has(game.id)) {
+              allGames.push(game);
+            }
+          });
+        }
+      }
+
+      // 3. statusフィルターの適用（ログインしていない場合）
+      if (!user && filters.status && filters.status !== "completed") {
+        allGames = [];
+      } else if (filters.status) {
+        allGames = allGames.filter(game => game.status === filters.status);
+      }
+
+      // 日付でソート
+      allGames.sort((a, b) => 
+        new Date(b.game_date).getTime() - new Date(a.game_date).getTime()
+      );
+
+      console.log("取得した試合数:", allGames.length);
+      setGames(allGames);
     } catch (error) {
-      console.error("試合検索エラー:", error);
+      console.error("予期しないエラー:", error);
       setError("試合の検索中にエラーが発生しました");
     } finally {
       setLoading(false);
@@ -123,6 +227,12 @@ export default function PublicGameSearch() {
     };
   };
 
+  // チーム関係者かどうかを判定
+  const isTeamMember = (teamId: string | null) => {
+    if (!teamId || !user) return false;
+    return userTeamIds.includes(teamId);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -130,8 +240,39 @@ export default function PublicGameSearch() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">試合検索</h1>
           <p className="text-gray-600">
-            公開されている試合を検索・閲覧できます
+            {user && userTeamIds.length > 0
+              ? "公開試合と所属チームの試合を検索・閲覧できます"
+              : "公開されている完了試合を検索・閲覧できます"}
           </p>
+        </div>
+
+        {/* 注意表示 */}
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex">
+            <svg
+              className="w-5 h-5 text-blue-600 mt-0.5 mr-2"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fillRule="evenodd"
+                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                clipRule="evenodd"
+              />
+            </svg>
+            <div className="text-sm text-blue-800">
+              <p className="font-semibold">表示される試合について</p>
+              {user && userTeamIds.length > 0 ? (
+                <p>
+                  所属チームの全試合と、その他の完了した公開試合が表示されます。
+                </p>
+              ) : (
+                <p>
+                  完了した公開試合のみが表示されます。予定試合や進行中の試合を見るには、チームに参加してください。
+                </p>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* エラー表示 */}
@@ -173,13 +314,23 @@ export default function PublicGameSearch() {
                 value={filters.status}
                 onChange={(e) => handleFilterChange("status", e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={!user || userTeamIds.length === 0}
               >
                 <option value="">すべて</option>
-                <option value="scheduled">予定</option>
-                <option value="in_progress">進行中</option>
+                {user && userTeamIds.length > 0 && (
+                  <>
+                    <option value="scheduled">予定</option>
+                    <option value="in_progress">進行中</option>
+                  </>
+                )}
                 <option value="completed">終了</option>
                 <option value="cancelled">中止</option>
               </select>
+              {(!user || userTeamIds.length === 0) && (
+                <p className="text-xs text-gray-500 mt-1">
+                  ※完了試合のみ表示されます
+                </p>
+              )}
             </div>
 
             <div>
@@ -260,6 +411,8 @@ export default function PublicGameSearch() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {games.map((game) => {
               const statusBadge = getStatusBadge(game.status);
+              const isMember = isTeamMember(game.home_team_id);
+              
               return (
                 <div
                   key={game.id}
@@ -269,11 +422,18 @@ export default function PublicGameSearch() {
                     <h3 className="text-lg font-medium text-gray-900 truncate flex-1">
                       {game.name}
                     </h3>
-                    <span
-                      className={`px-2 py-1 text-xs font-medium rounded-full ml-2 ${statusBadge.class}`}
-                    >
-                      {statusBadge.label}
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span
+                        className={`px-2 py-1 text-xs font-medium rounded-full ${statusBadge.class}`}
+                      >
+                        {statusBadge.label}
+                      </span>
+                      {isMember && (
+                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                          所属
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-2 text-sm text-gray-600 mb-4">
@@ -334,29 +494,6 @@ export default function PublicGameSearch() {
                       </svg>
                       <span>vs {game.opponent_name}</span>
                     </div>
-
-                    {game.record_type && (
-                      <div className="flex items-center space-x-1">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.997 1.997 0 013 12V7a4 4 0 014-4z"
-                          />
-                        </svg>
-                        <span>
-                          {game.record_type === "personal"
-                            ? "個人記録"
-                            : "チーム記録"}
-                        </span>
-                      </div>
-                    )}
                   </div>
 
                   {/* スコア表示（完了した試合のみ） */}

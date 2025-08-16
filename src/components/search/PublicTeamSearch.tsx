@@ -3,11 +3,14 @@
 import { useState, useEffect } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import Link from "next/link";
+import { prefectures } from "@/lib/japanData";
 
 interface Team {
   id: string;
   name: string;
   description: string;
+  prefecture: string | null;
+  city: string | null;
   created_at: string;
 }
 
@@ -15,6 +18,7 @@ export default function PublicTeamSearch() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedPrefecture, setSelectedPrefecture] = useState("");
   const [error, setError] = useState<string | null>(null);
   const supabase = createClientComponentClient();
 
@@ -26,36 +30,22 @@ export default function PublicTeamSearch() {
     try {
       setError(null);
 
-      // デバッグ: Supabaseクライアントの確認
-      console.log("Supabaseクライアント:", supabase);
-
-      const {
-        data,
-        error: fetchError,
-        status,
-        statusText,
-      } = await supabase
+      let query = supabase
         .from("teams")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(20);
 
-      // デバッグ情報
-      console.log("Response status:", status);
-      console.log("Response statusText:", statusText);
-      console.log("Response data:", data);
-      console.log("Response error:", fetchError);
+      // 都道府県フィルター
+      if (selectedPrefecture) {
+        query = query.eq("prefecture", selectedPrefecture);
+      }
+
+      const { data, error: fetchError } = await query;
 
       if (fetchError) {
-        console.error("チーム取得エラー詳細:", {
-          message: fetchError.message,
-          details: fetchError.details,
-          hint: fetchError.hint,
-          code: fetchError.code,
-        });
-        setError(
-          `エラー: ${fetchError.message || "チームの取得に失敗しました"}`
-        );
+        console.error("チーム取得エラー:", fetchError);
+        setError("チームの取得に失敗しました");
         setTeams([]);
       } else {
         setTeams(data || []);
@@ -80,11 +70,15 @@ export default function PublicTeamSearch() {
         query = query.ilike("name", `%${searchTerm}%`);
       }
 
+      if (selectedPrefecture) {
+        query = query.eq("prefecture", selectedPrefecture);
+      }
+
       const { data, error: searchError } = await query;
 
       if (searchError) {
         console.error("検索エラー:", searchError);
-        setError(`検索エラー: ${searchError.message}`);
+        setError("検索中にエラーが発生しました");
         setTeams([]);
       } else {
         setTeams(data || []);
@@ -95,6 +89,12 @@ export default function PublicTeamSearch() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearFilters = () => {
+    setSelectedPrefecture("");
+    setSearchTerm("");
+    fetchTeams();
   };
 
   if (loading) {
@@ -119,41 +119,68 @@ export default function PublicTeamSearch() {
 
         {/* 検索バー */}
         <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <div className="flex gap-4">
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-              placeholder="チーム名で検索..."
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              onClick={handleSearch}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              検索
-            </button>
+          <div className="flex flex-col space-y-4">
+            <div className="flex gap-4">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleSearch()}
+                placeholder="チーム名で検索..."
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <select
+                value={selectedPrefecture}
+                onChange={(e) => setSelectedPrefecture(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">全都道府県</option>
+                {prefectures.map((pref) => (
+                  <option key={pref} value={pref}>
+                    {pref}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleSearch}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                検索
+              </button>
+            </div>
+            {(selectedPrefecture || searchTerm) && (
+              <div className="flex justify-between items-center">
+                <div className="text-sm text-gray-600">
+                  {selectedPrefecture && (
+                    <span className="mr-2">
+                      都道府県: <span className="font-medium">{selectedPrefecture}</span>
+                    </span>
+                  )}
+                  {searchTerm && (
+                    <span>
+                      キーワード: <span className="font-medium">{searchTerm}</span>
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={clearFilters}
+                  className="text-sm text-blue-600 hover:text-blue-700"
+                >
+                  フィルターをクリア
+                </button>
+              </div>
+            )}
           </div>
         </div>
-
-        {/* デバッグ情報（開発環境のみ） */}
-        {process.env.NODE_ENV === "development" && (
-          <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <p className="text-sm text-yellow-800">
-              デバッグ: {teams.length}件のチームが見つかりました
-            </p>
-            <p className="text-sm text-yellow-800">
-              Supabase URL:{" "}
-              {process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 30)}...
-            </p>
-          </div>
-        )}
 
         {/* チーム一覧 */}
         {teams.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-600">公開されているチームがありません</p>
+            <p className="text-gray-600">
+              {searchTerm || selectedPrefecture
+                ? "検索条件に一致するチームが見つかりませんでした"
+                : "公開されているチームがありません"}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -165,10 +192,36 @@ export default function PublicTeamSearch() {
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   {team.name}
                 </h3>
-                <p className="text-gray-600 mb-4 line-clamp-2">
+                <p className="text-gray-600 mb-2 line-clamp-2">
                   {team.description || "チームの説明はありません"}
                 </p>
-                <div className="flex items-center justify-between">
+                {(team.prefecture || team.city) && (
+                  <div className="flex items-center text-sm text-gray-500 mb-2">
+                    <svg
+                      className="w-4 h-4 mr-1"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <span>
+                      {team.prefecture}{team.city && ` ${team.city}`}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between mt-4">
                   <span className="text-sm text-gray-500">
                     {new Date(team.created_at).toLocaleDateString("ja-JP")}
                   </span>

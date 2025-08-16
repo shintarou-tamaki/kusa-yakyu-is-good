@@ -5,10 +5,14 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { prefectures, cities } from "@/lib/japanData";
 
 export default function CreateTeamPage() {
   const [teamName, setTeamName] = useState("");
   const [description, setDescription] = useState("");
+  const [prefecture, setPrefecture] = useState("");
+  const [city, setCity] = useState("");
+  const [availableCities, setAvailableCities] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { user } = useAuth();
@@ -21,6 +25,17 @@ export default function CreateTeamPage() {
       console.log("ユーザー未認証");
     }
   }, [user]);
+
+  // 都道府県が変更されたら市区町村リストを更新
+  useEffect(() => {
+    if (prefecture) {
+      setAvailableCities(cities[prefecture] || []);
+      setCity(""); // 都道府県が変更されたら市区町村をリセット
+    } else {
+      setAvailableCities([]);
+      setCity("");
+    }
+  }, [prefecture]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,8 +61,9 @@ export default function CreateTeamPage() {
           {
             name: teamName.trim(),
             description: description.trim() || null,
+            prefecture: prefecture || null,
+            city: city || null,
             owner_id: user.id,
-            // membersカラムは一旦除外
           },
         ])
         .select()
@@ -61,8 +77,25 @@ export default function CreateTeamPage() {
 
       console.log("チーム作成成功:", data);
 
-      // 作成成功後、チーム詳細ページへリダイレクト
-      router.push(`/teams/${data.id}`);
+      // チーム作成成功後、オーナーをメンバーとして追加
+      if (data) {
+        // オーナーをteam_membersに追加（トリガーが動作しない場合のバックアップ）
+        const { error: memberError } = await supabase
+          .from("team_members")
+          .insert({
+            team_id: data.id,
+            user_id: user.id,
+            role: 'owner',
+            joined_at: new Date().toISOString()
+          });
+
+        if (memberError) {
+          console.log("オーナー追加エラー（トリガーで処理済みの可能性）:", memberError);
+        }
+
+        // 作成成功後、チーム詳細ページへリダイレクト
+        router.push(`/teams/${data.id}`);
+      }
     } catch (error) {
       console.error("予期しないエラー:", error);
       setError("予期しないエラーが発生しました");
@@ -143,6 +176,63 @@ export default function CreateTeamPage() {
                 rows={4}
                 maxLength={200}
               />
+            </div>
+
+            {/* 主な活動地域 */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                主な活動地域
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="prefecture"
+                    className="block text-xs text-gray-600 mb-1"
+                  >
+                    都道府県
+                  </label>
+                  <select
+                    id="prefecture"
+                    value={prefecture}
+                    onChange={(e) => setPrefecture(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">選択してください</option>
+                    {prefectures.map((pref) => (
+                      <option key={pref} value={pref}>
+                        {pref}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label
+                    htmlFor="city"
+                    className="block text-xs text-gray-600 mb-1"
+                  >
+                    市区町村
+                  </label>
+                  <select
+                    id="city"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={!prefecture}
+                  >
+                    <option value="">
+                      {prefecture ? "選択してください" : "都道府県を先に選択"}
+                    </option>
+                    {availableCities.map((cityName) => (
+                      <option key={cityName} value={cityName}>
+                        {cityName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                チームの主な活動地域を設定すると、近くのチームを探しやすくなります
+              </p>
             </div>
 
             <div className="flex justify-end space-x-4">

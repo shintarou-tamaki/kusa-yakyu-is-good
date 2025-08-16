@@ -5,11 +5,14 @@ import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { prefectures, cities } from "@/lib/japanData";
 
 interface Team {
   id: string;
   name: string;
   description: string;
+  prefecture: string | null;
+  city: string | null;
   owner_id: string;
   created_at: string;
   updated_at: string;
@@ -29,6 +32,9 @@ export default function EditTeamPage({ params }: PageProps) {
   const [team, setTeam] = useState<Team | null>(null);
   const [teamName, setTeamName] = useState("");
   const [description, setDescription] = useState("");
+  const [prefecture, setPrefecture] = useState("");
+  const [city, setCity] = useState("");
+  const [availableCities, setAvailableCities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -41,6 +47,20 @@ export default function EditTeamPage({ params }: PageProps) {
       fetchTeam();
     }
   }, [user, teamId]);
+
+  // 都道府県が変更されたら市区町村リストを更新
+  useEffect(() => {
+    if (prefecture) {
+      setAvailableCities(cities[prefecture] || []);
+      // 都道府県が変更されて、現在の市区町村が新しいリストにない場合はリセット
+      if (city && !cities[prefecture]?.includes(city)) {
+        setCity("");
+      }
+    } else {
+      setAvailableCities([]);
+      setCity("");
+    }
+  }, [prefecture]);
 
   const fetchTeam = async () => {
     try {
@@ -71,6 +91,13 @@ export default function EditTeamPage({ params }: PageProps) {
       setTeam(data);
       setTeamName(data.name);
       setDescription(data.description || "");
+      setPrefecture(data.prefecture || "");
+      setCity(data.city || "");
+      
+      // 既存の都道府県がある場合は市区町村リストを設定
+      if (data.prefecture) {
+        setAvailableCities(cities[data.prefecture] || []);
+      }
     } catch (error) {
       console.error("チーム取得エラー:", error);
       router.push("/teams");
@@ -96,6 +123,8 @@ export default function EditTeamPage({ params }: PageProps) {
         .update({
           name: teamName.trim(),
           description: description.trim() || null,
+          prefecture: prefecture || null,
+          city: city || null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", teamId);
@@ -217,6 +246,63 @@ export default function EditTeamPage({ params }: PageProps) {
               />
               <p className="mt-1 text-sm text-gray-500">
                 {description.length}/200文字
+              </p>
+            </div>
+
+            {/* 主な活動地域 */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                主な活動地域
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label
+                    htmlFor="prefecture"
+                    className="block text-xs text-gray-600 mb-1"
+                  >
+                    都道府県
+                  </label>
+                  <select
+                    id="prefecture"
+                    value={prefecture}
+                    onChange={(e) => setPrefecture(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">選択してください</option>
+                    {prefectures.map((pref) => (
+                      <option key={pref} value={pref}>
+                        {pref}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label
+                    htmlFor="city"
+                    className="block text-xs text-gray-600 mb-1"
+                  >
+                    市区町村
+                  </label>
+                  <select
+                    id="city"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={!prefecture}
+                  >
+                    <option value="">
+                      {prefecture ? "選択してください" : "都道府県を先に選択"}
+                    </option>
+                    {availableCities.map((cityName) => (
+                      <option key={cityName} value={cityName}>
+                        {cityName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                チームの主な活動地域を設定すると、近くのチームを探しやすくなります
               </p>
             </div>
 

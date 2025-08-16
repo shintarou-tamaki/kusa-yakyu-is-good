@@ -1,0 +1,93 @@
+=== Supabaseデータベース情報 ===
+=== 更新日: 2025年 8月16日 土曜日 20時16分06秒 JST ===
+
+=== テーブル構造 ===
+| table_name         | column_name          | data_type                   | is_nullable | column_default                 |
+| ------------------ | -------------------- | --------------------------- | ----------- | ------------------------------ |
+| game_scores        | id                   | uuid                        | NO          | gen_random_uuid()              |
+| game_scores        | game_id              | uuid                        | YES         | null                           |
+| game_scores        | inning               | integer                     | NO          | null                           |
+| game_scores        | top_score            | integer                     | YES         | null                           |
+| game_scores        | bottom_score         | integer                     | YES         | null                           |
+| game_scores        | is_my_team_bat_first | boolean                     | YES         | true                           |
+| game_scores        | created_at           | timestamp with time zone    | YES         | now()                          |
+| game_scores        | updated_at           | timestamp with time zone    | YES         | now()                          |
+| games              | id                   | uuid                        | NO          | gen_random_uuid()              |
+| games              | name                 | character varying           | NO          | null                           |
+| games              | game_date            | date                        | NO          | null                           |
+| games              | game_time            | time without time zone      | YES         | null                           |
+| games              | location             | text                        | YES         | null                           |
+| games              | description          | text                        | YES         | null                           |
+| games              | home_team_id         | uuid                        | YES         | null                           |
+| games              | opponent_name        | character varying           | YES         | '未定'::character varying        |
+| games              | created_by           | uuid                        | YES         | null                           |
+| games              | status               | character varying           | YES         | 'scheduled'::character varying |
+| games              | home_score           | integer                     | YES         | 0                              |
+| games              | opponent_score       | integer                     | YES         | 0                              |
+| games              | record_type          | character varying           | YES         | 'team'::character varying      |
+| games              | is_public            | boolean                     | YES         | true                           |
+| games              | created_at           | timestamp with time zone    | YES         | now()                          |
+| games              | updated_at           | timestamp with time zone    | YES         | now()                          |
+| team_join_requests | id                   | uuid                        | NO          | gen_random_uuid()              |
+| team_join_requests | team_id              | uuid                        | YES         | null                           |
+| team_join_requests | user_id              | uuid                        | YES         | null                           |
+| team_join_requests | status               | character varying           | YES         | 'pending'::character varying   |
+| team_join_requests | message              | text                        | YES         | null                           |
+| team_join_requests | requested_at         | timestamp with time zone    | YES         | now()                          |
+| team_join_requests | responded_at         | timestamp with time zone    | YES         | null                           |
+| team_join_requests | responded_by         | uuid                        | YES         | null                           |
+| team_members       | id                   | uuid                        | NO          | uuid_generate_v4()             |
+| team_members       | team_id              | uuid                        | YES         | null                           |
+| team_members       | user_id              | uuid                        | YES         | null                           |
+| team_members       | role                 | text                        | YES         | 'player'::text                 |
+| team_members       | joined_at            | timestamp without time zone | YES         | now()                          |
+| teams              | id                   | uuid                        | NO          | gen_random_uuid()              |
+| teams              | name                 | character varying           | NO          | null                           |
+| teams              | description          | text                        | YES         | null                           |
+| teams              | owner_id             | uuid                        | YES         | null                           |
+| teams              | members              | ARRAY                       | YES         | ARRAY[]::uuid[]                |
+| teams              | created_at           | timestamp with time zone    | YES         | now()                          |
+| teams              | updated_at           | timestamp with time zone    | YES         | now()                          |
+| teams              | prefecture           | character varying           | YES         | null                           |
+| teams              | city                 | character varying           | YES         | null                           |
+| user_profiles      | id                   | uuid                        | NO          | null                           |
+| user_profiles      | display_name         | text                        | YES         | 'ユーザー'::text                   |
+| user_profiles      | avatar_url           | text                        | YES         | null                           |
+| user_profiles      | provider             | text                        | YES         | null                           |
+| user_profiles      | created_at           | timestamp without time zone | YES         | now()                          |
+| user_profiles      | updated_at           | timestamp without time zone | YES         | now()                          |
+
+
+
+=== RLSポリシー ===
+| tablename          | policyname                            | cmd    | condition                                                                                                                                                                                                 |
+| ------------------ | ------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| game_scores        | Game owners can manage scores         | ALL    | (game_id IN ( SELECT games.id
+   FROM games
+  WHERE ((games.created_by = auth.uid()) OR (games.home_team_id IN ( SELECT teams.id
+           FROM teams
+          WHERE (teams.owner_id = auth.uid())))))) |
+| game_scores        | Game scores are viewable by everyone  | SELECT | true                                                                                                                                                                                                      |
+| games              | Authenticated users can create games  | INSERT | null                                                                                                                                                                                                      |
+| games              | Public games are viewable by everyone | SELECT | (is_public = true)                                                                                                                                                                                        |
+| games              | Users can delete their own games      | DELETE | (created_by = auth.uid())                                                                                                                                                                                 |
+| games              | Users can update their own games      | UPDATE | (created_by = auth.uid())                                                                                                                                                                                 |
+| games              | Users can view their own games        | SELECT | (created_by = auth.uid())                                                                                                                                                                                 |
+| team_join_requests | Anyone can create join requests       | INSERT | null                                                                                                                                                                                                      |
+| team_join_requests | Delete own pending requests           | DELETE | ((user_id = auth.uid()) AND ((status)::text = 'pending'::text))                                                                                                                                           |
+| team_join_requests | Team owners update requests           | UPDATE | (EXISTS ( SELECT 1
+   FROM teams
+  WHERE ((teams.id = team_join_requests.team_id) AND (teams.owner_id = auth.uid()))))                                                                                    |
+| team_join_requests | View own requests or team requests    | SELECT | ((user_id = auth.uid()) OR (team_id IN ( SELECT teams.id
+   FROM teams
+  WHERE (teams.owner_id = auth.uid()))))                                                                                           |
+| team_members       | Anyone can view members               | SELECT | true                                                                                                                                                                                                      |
+| team_members       | Members can leave teams               | DELETE | (user_id = auth.uid())                                                                                                                                                                                    |
+| team_members       | Team owners add members               | INSERT | null                                                                                                                                                                                                      |
+| teams              | Anyone can view teams                 | SELECT | true                                                                                                                                                                                                      |
+| teams              | Authenticated users can create teams  | INSERT | null                                                                                                                                                                                                      |
+| teams              | Owners can delete their teams         | DELETE | (auth.uid() = owner_id)                                                                                                                                                                                   |
+| teams              | Owners can update their teams         | UPDATE | (auth.uid() = owner_id)                                                                                                                                                                                   |
+| user_profiles      | allow_create_own_profile              | INSERT | null                                                                                                                                                                                                      |
+| user_profiles      | allow_read_profiles                   | SELECT | true                                                                                                                                                                                                      |
+| user_profiles      | allow_update_own_profile              | UPDATE | (auth.uid() = id)                                                                                                                                                                                         |

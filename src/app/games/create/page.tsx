@@ -9,6 +9,7 @@ import Link from "next/link";
 interface Team {
   id: string;
   name: string;
+  role?: string;
 }
 
 export default function CreateGamePage() {
@@ -25,6 +26,8 @@ export default function CreateGamePage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [recordType, setRecordType] = useState("team");
+  const [isPublic, setIsPublic] = useState(true);
 
   const { user } = useAuth();
   const router = useRouter();
@@ -47,18 +50,65 @@ export default function CreateGamePage() {
 
   const fetchUserTeams = async () => {
     try {
-      const { data, error } = await supabase
+      const allTeams: Team[] = [];
+      const teamIds = new Set<string>();
+
+      // 1. オーナーとして所有するチーム
+      const { data: ownedTeams, error: ownedError } = await supabase
         .from("teams")
         .select("id, name")
         .eq("owner_id", user?.id)
         .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("チーム取得エラー:", error);
-        return;
+      if (ownedError) {
+        console.error("所有チーム取得エラー:", ownedError);
+      } else if (ownedTeams) {
+        ownedTeams.forEach(team => {
+          if (!teamIds.has(team.id)) {
+            allTeams.push({
+              ...team,
+              role: 'owner'
+            });
+            teamIds.add(team.id);
+          }
+        });
       }
 
-      setTeams(data || []);
+      // 2. メンバーとして所属するチーム
+      const { data: memberData, error: memberError } = await supabase
+        .from("team_members")
+        .select(`
+          team_id,
+          role,
+          teams:team_id (
+            id,
+            name
+          )
+        `)
+        .eq("user_id", user?.id);
+
+      if (memberError) {
+        console.error("所属チーム取得エラー:", memberError);
+      } else if (memberData) {
+        memberData.forEach(member => {
+          const team = member.teams as unknown as Team;
+          if (team && !teamIds.has(team.id)) {
+            allTeams.push({
+              ...team,
+              role: member.role
+            });
+            teamIds.add(team.id);
+          }
+        });
+      }
+
+      setTeams(allTeams);
+
+      // URLパラメータのチームIDが所属チームに含まれているか確認
+      if (teamIdFromUrl && !teamIds.has(teamIdFromUrl)) {
+        setError("指定されたチームに所属していません");
+        setSelectedTeamId("");
+      }
     } catch (error) {
       console.error("チーム取得エラー:", error);
     }
@@ -77,7 +127,7 @@ export default function CreateGamePage() {
       return;
     }
 
-    if (!selectedTeamId) {
+    if (recordType === "team" && !selectedTeamId) {
       setError("チームを選択してください");
       return;
     }
@@ -96,10 +146,14 @@ export default function CreateGamePage() {
             game_time: gameTime || null,
             location: location.trim() || null,
             description: description.trim() || null,
-            home_team_id: selectedTeamId,
+            home_team_id: recordType === "team" ? selectedTeamId : null,
             opponent_name: opponentName.trim() || "未定",
             created_by: user?.id,
-            status: "scheduled", // scheduled, in_progress, completed, cancelled
+            status: "scheduled",
+            record_type: recordType,
+            is_public: isPublic,
+            home_score: 0,
+            opponent_score: 0,
           },
         ])
         .select()
@@ -107,33 +161,7 @@ export default function CreateGamePage() {
 
       if (createError) {
         console.error("試合作成エラー:", createError);
-
-        if (createError.code === "42P01") {
-          setError(
-            "gamesテーブルが存在しません。データベースの設定が必要です。"
-          );
-          // テーブル作成のSQLを表示
-          console.log(`
-            CREATE TABLE games (
-              id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-              name VARCHAR(100) NOT NULL,
-              game_date DATE NOT NULL,
-              game_time TIME,
-              location TEXT,
-              description TEXT,
-              home_team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
-              opponent_name VARCHAR(100),
-              created_by UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-              status VARCHAR(20) DEFAULT 'scheduled',
-              home_score INTEGER DEFAULT 0,
-              opponent_score INTEGER DEFAULT 0,
-              created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-              updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-          `);
-        } else {
-          setError(`エラー: ${createError.message}`);
-        }
+        setError(`エラー: ${createError.message}`);
         return;
       }
 
@@ -185,43 +213,76 @@ export default function CreateGamePage() {
           )}
 
           <form onSubmit={handleSubmit}>
-            {/* チーム選択 */}
+            {/* 記録タイプ */}
             <div className="mb-6">
-              <label
-                htmlFor="team"
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
-                チーム <span className="text-red-500">*</span>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                記録タイプ
               </label>
-              {teams.length > 0 ? (
-                <select
-                  id="team"
-                  value={selectedTeamId}
-                  onChange={(e) => setSelectedTeamId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                >
-                  <option value="">チームを選択してください</option>
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm text-yellow-800">
-                    先にチームを作成してください
-                  </p>
-                  <Link
-                    href="/teams/create"
-                    className="text-sm text-blue-600 hover:text-blue-700 underline"
-                  >
-                    チームを作成する
-                  </Link>
-                </div>
-              )}
+              <div className="flex space-x-4">
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    value="team"
+                    checked={recordType === "team"}
+                    onChange={(e) => setRecordType(e.target.value)}
+                    className="mr-2"
+                  />
+                  <span>チーム記録</span>
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    value="personal"
+                    checked={recordType === "personal"}
+                    onChange={(e) => setRecordType(e.target.value)}
+                    className="mr-2"
+                  />
+                  <span>個人記録</span>
+                </label>
+              </div>
             </div>
+
+            {/* チーム選択（チーム記録の場合） */}
+            {recordType === "team" && (
+              <div className="mb-6">
+                <label
+                  htmlFor="team"
+                  className="block text-sm font-medium text-gray-700 mb-2"
+                >
+                  チーム <span className="text-red-500">*</span>
+                </label>
+                {teams.length > 0 ? (
+                  <select
+                    id="team"
+                    value={selectedTeamId}
+                    onChange={(e) => setSelectedTeamId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">チームを選択してください</option>
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                        {team.role === 'owner' && ' (オーナー)'}
+                        {team.role === 'member' && ' (メンバー)'}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800">
+                      所属するチームがありません
+                    </p>
+                    <Link
+                      href="/teams/create"
+                      className="text-sm text-blue-600 hover:text-blue-700 underline"
+                    >
+                      チームを作成する
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 試合名 */}
             <div className="mb-6">
@@ -334,6 +395,21 @@ export default function CreateGamePage() {
               />
             </div>
 
+            {/* 公開設定 */}
+            <div className="mb-6">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={isPublic}
+                  onChange={(e) => setIsPublic(e.target.checked)}
+                  className="mr-2"
+                />
+                <span className="text-sm font-medium text-gray-700">
+                  この試合を公開する（他のユーザーも閲覧可能）
+                </span>
+              </label>
+            </div>
+
             {/* ボタン */}
             <div className="flex justify-end space-x-4">
               <Link
@@ -345,7 +421,10 @@ export default function CreateGamePage() {
               <button
                 type="submit"
                 disabled={
-                  loading || !gameName.trim() || !gameDate || !selectedTeamId
+                  loading || 
+                  !gameName.trim() || 
+                  !gameDate || 
+                  (recordType === "team" && !selectedTeamId)
                 }
                 className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >

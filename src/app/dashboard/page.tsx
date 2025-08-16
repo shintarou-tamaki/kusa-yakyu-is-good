@@ -27,21 +27,42 @@ interface Game {
   created_at: string;
 }
 
+interface JoinRequest {
+  id: string;
+  team_id: string;
+  user_id: string;
+  status: string;
+  requested_at: string;
+  teams: {
+    id: string;
+    name: string;
+  };
+}
+
+interface UserProfile {
+  display_name: string | null;
+}
+
 interface Stats {
   totalTeams: number;
   totalGames: number;
   upcomingGames: number;
   completedGames: number;
+  pendingRequests: number;
 }
 
 export default function DashboardPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [games, setGames] = useState<Game[]>([]);
+  const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<JoinRequest[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [stats, setStats] = useState<Stats>({
     totalTeams: 0,
     totalGames: 0,
     upcomingGames: 0,
     completedGames: 0,
+    pendingRequests: 0,
   });
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
@@ -54,57 +75,179 @@ export default function DashboardPage() {
       return;
     }
 
+    fetchUserProfile();
     fetchDashboardData();
   }, [user]);
+
+  const fetchUserProfile = async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+
+      if (data) {
+        setUserProfile(data);
+      } else if (!error || error.code === 'PGRST116') {
+        // プロフィールが存在しない場合は設定ページへ
+        router.push("/auth/setup");
+      }
+    } catch (error) {
+      console.error("プロフィール取得エラー:", error);
+    }
+  };
 
   const fetchDashboardData = async () => {
     if (!user) return;
 
-    console.log("ユーザーID:", user.id); // デバッグ用
-
     try {
-      // チーム情報を取得
-      const { data: teamsData, error: teamsError } = await supabase
+      // 所属チーム情報を取得（オーナーとメンバー両方）
+      // 1. オーナーとして所有するチーム
+      const { data: ownedTeams, error: ownedError } = await supabase
         .from("teams")
         .select("*")
         .eq("owner_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(5);
+        .order("created_at", { ascending: false });
 
-      console.log("取得したチーム:", teamsData); // デバッグ用
+      // 2. メンバーとして所属するチーム
+      const { data: memberTeams, error: memberError } = await supabase
+        .from("team_members")
+        .select(`
+          team_id,
+          teams:team_id (
+            id,
+            name,
+            description,
+            created_at
+          )
+        `)
+        .eq("user_id", user.id);
 
-      if (teamsError) {
-        console.error("チーム取得エラー:", teamsError);
-      } else {
-        setTeams(teamsData || []);
+      // チームを統合（重複を除く）
+      const allTeams: Team[] = [];
+      const teamIds = new Set<string>();
+
+      if (ownedTeams) {
+        ownedTeams.forEach(team => {
+          if (!teamIds.has(team.id)) {
+            allTeams.push(team);
+            teamIds.add(team.id);
+          }
+        });
       }
 
-      // 試合情報を取得（自分が作成した試合、または自分のチームの試合）
-      const { data: gamesData, error: gamesError } = await supabase
+      if (memberTeams) {
+        memberTeams.forEach(member => {
+          const team = member.teams as unknown as Team;
+          if (team && !teamIds.has(team.id)) {
+            allTeams.push(team);
+            teamIds.add(team.id);
+          }
+        });
+      }
+
+      // 作成日でソート
+      allTeams.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      setTeams(allTeams.slice(0, 5)); // 最新5件のみ表示
+
+      // 試合情報を取得（所属チームの試合も含む）
+      const teamIdArray = Array.from(teamIds);
+      
+      // 自分が作成した試合 OR 所属チームの試合
+      let allGames: Game[] = [];
+      
+      // 自分が作成した試合
+      const { data: createdGames } = await supabase
         .from("games")
         .select("*")
-        .or(`created_by.eq.${user.id}`)
-        .order("game_date", { ascending: true });
+        .eq("created_by", user.id);
 
-      console.log("取得した試合:", gamesData); // デバッグ用
+      if (createdGames) {
+        allGames = [...createdGames];
+      }
 
-      if (gamesError) {
-        console.error("試合取得エラー:", gamesError);
-      } else {
-        setGames(gamesData || []);
+      // 所属チームの試合
+      if (teamIdArray.length > 0) {
+        const { data: teamGames } = await supabase
+          .from("games")
+          .select("*")
+          .in("home_team_id", teamIdArray);
 
-        // 統計情報を計算
-        const upcoming =
-          gamesData?.filter((g) => g.status === "scheduled").length || 0;
-        const completed =
-          gamesData?.filter((g) => g.status === "completed").length || 0;
+        if (teamGames) {
+          // 重複を除く
+          const existingGameIds = new Set(allGames.map(g => g.id));
+          teamGames.forEach(game => {
+            if (!existingGameIds.has(game.id)) {
+              allGames.push(game);
+            }
+          });
+        }
+      }
 
-        setStats({
-          totalTeams: teamsData?.length || 0,
-          totalGames: gamesData?.length || 0,
-          upcomingGames: upcoming,
-          completedGames: completed,
-        });
+      // 日付でソート
+      allGames.sort((a, b) => 
+        new Date(a.game_date).getTime() - new Date(b.game_date).getTime()
+      );
+
+      setGames(allGames);
+
+      // 統計情報を計算
+      const upcoming = allGames.filter(g => g.status === "scheduled").length;
+      const completed = allGames.filter(g => g.status === "completed").length;
+
+      setStats({
+        totalTeams: allTeams.length,
+        totalGames: allGames.length,
+        upcomingGames: upcoming,
+        completedGames: completed,
+        pendingRequests: 0,
+      });
+
+      // 自分の参加申請を取得
+      const { data: myRequestsData } = await supabase
+        .from("team_join_requests")
+        .select(`
+          *,
+          teams:team_id (
+            id,
+            name
+          )
+        `)
+        .eq("user_id", user.id)
+        .order("requested_at", { ascending: false });
+
+      if (myRequestsData) {
+        setMyRequests(myRequestsData);
+      }
+
+      // 自分がオーナーのチームへの参加申請を取得
+      if (ownedTeams && ownedTeams.length > 0) {
+        const ownedTeamIds = ownedTeams.map((t) => t.id);
+        const { data: pendingData } = await supabase
+          .from("team_join_requests")
+          .select(`
+            *,
+            teams:team_id (
+              id,
+              name
+            )
+          `)
+          .in("team_id", ownedTeamIds)
+          .eq("status", "pending");
+
+        if (pendingData) {
+          setPendingApprovals(pendingData);
+          setStats(prev => ({
+            ...prev,
+            pendingRequests: pendingData.length
+          }));
+        }
       }
     } catch (error) {
       console.error("ダッシュボードデータ取得エラー:", error);
@@ -127,6 +270,9 @@ export default function DashboardPage() {
       in_progress: { color: "bg-yellow-100 text-yellow-800", text: "進行中" },
       completed: { color: "bg-green-100 text-green-800", text: "終了" },
       cancelled: { color: "bg-red-100 text-red-800", text: "中止" },
+      pending: { color: "bg-yellow-100 text-yellow-800", text: "申請中" },
+      approved: { color: "bg-green-100 text-green-800", text: "承認済" },
+      rejected: { color: "bg-red-100 text-red-800", text: "却下" },
     };
     const config = statusConfig[status as keyof typeof statusConfig] || {
       color: "bg-gray-100 text-gray-800",
@@ -159,9 +305,36 @@ export default function DashboardPage() {
               <h1 className="text-3xl font-bold text-gray-900">
                 ダッシュボード
               </h1>
-              <p className="mt-1 text-gray-600">ようこそ、{user?.email}さん</p>
+              <p className="mt-1 text-gray-600">
+                ようこそ、{userProfile?.display_name || "ゲスト"}さん
+              </p>
             </div>
-            <div className="flex space-x-4">
+            <div className="flex items-center space-x-4">
+              <Link
+                href="/dashboard/settings"
+                className="text-gray-600 hover:text-gray-900"
+                title="アカウント設定"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+              </Link>
               <Link
                 href="/teams/create"
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -180,8 +353,28 @@ export default function DashboardPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* 通知エリア */}
+        {pendingApprovals.length > 0 && (
+          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <svg className="w-5 h-5 text-yellow-600 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <span className="text-yellow-800">
+                {pendingApprovals.length}件の参加申請が承認待ちです
+              </span>
+              <Link
+                href="/teams"
+                className="ml-auto text-yellow-600 hover:text-yellow-700 font-medium"
+              >
+                確認する →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* 統計カード */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center">
               <div className="flex-shrink-0 bg-blue-100 rounded-full p-3">
@@ -285,15 +478,72 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
+
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0 bg-orange-100 rounded-full p-3">
+                <svg
+                  className="w-6 h-6 text-orange-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                  />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-600">承認待ち</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {stats.pendingRequests}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
+        {/* 参加申請状況 */}
+        {myRequests.length > 0 && (
+          <div className="mb-8 bg-white rounded-lg shadow">
+            <div className="px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">
+                参加申請状況
+              </h2>
+            </div>
+            <div className="p-6">
+              <div className="space-y-3">
+                {myRequests.slice(0, 3).map((request) => (
+                  <div key={request.id} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div>
+                      <Link
+                        href={`/teams/${request.team_id}`}
+                        className="font-medium text-gray-900 hover:text-blue-600"
+                      >
+                        {request.teams?.name}
+                      </Link>
+                      <p className="text-sm text-gray-500">
+                        申請日: {new Date(request.requested_at).toLocaleDateString("ja-JP")}
+                      </p>
+                    </div>
+                    {getStatusBadge(request.status)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* マイチーム */}
+          {/* 所属チーム */}
           <div className="bg-white rounded-lg shadow">
             <div className="px-6 py-4 border-b">
               <div className="flex justify-between items-center">
                 <h2 className="text-lg font-semibold text-gray-900">
-                  マイチーム
+                  所属チーム
                 </h2>
                 <Link
                   href="/teams"
@@ -306,13 +556,21 @@ export default function DashboardPage() {
             <div className="p-6">
               {teams.length === 0 ? (
                 <div className="text-center py-8">
-                  <p className="text-gray-500 mb-4">チームがありません</p>
-                  <Link
-                    href="/teams/create"
-                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                  >
-                    チームを作成
-                  </Link>
+                  <p className="text-gray-500 mb-4">所属チームがありません</p>
+                  <div className="space-y-2">
+                    <Link
+                      href="/teams/create"
+                      className="block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      チームを作成
+                    </Link>
+                    <Link
+                      href="/search/teams"
+                      className="block px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50"
+                    >
+                      チームを探す
+                    </Link>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">

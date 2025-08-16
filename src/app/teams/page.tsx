@@ -14,8 +14,12 @@ interface Team {
   owner_id: string;
 }
 
+interface TeamWithRole extends Team {
+  role: 'owner' | 'member';
+}
+
 export default function TeamsPage() {
-  const [teams, setTeams] = useState<Team[]>([]);
+  const [teams, setTeams] = useState<TeamWithRole[]>([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const router = useRouter();
@@ -30,20 +34,67 @@ export default function TeamsPage() {
 
   const fetchTeams = async () => {
     try {
-      // ユーザーが所有するチームを取得
-      const { data, error } = await supabase
+      const allTeams: TeamWithRole[] = [];
+      const teamIds = new Set<string>();
+
+      // 1. ユーザーが所有するチームを取得
+      const { data: ownedTeams, error: ownedError } = await supabase
         .from("teams")
         .select("*")
         .eq("owner_id", user?.id)
         .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("チーム取得エラー:", error);
-        // テーブルが存在しない場合は空配列をセット
-        setTeams([]);
-      } else {
-        setTeams(data || []);
+      if (ownedError) {
+        console.error("所有チーム取得エラー:", ownedError);
+      } else if (ownedTeams) {
+        ownedTeams.forEach(team => {
+          if (!teamIds.has(team.id)) {
+            allTeams.push({
+              ...team,
+              role: 'owner'
+            });
+            teamIds.add(team.id);
+          }
+        });
       }
+
+      // 2. メンバーとして所属するチームを取得
+      const { data: memberData, error: memberError } = await supabase
+        .from("team_members")
+        .select(`
+          team_id,
+          role,
+          teams:team_id (
+            id,
+            name,
+            description,
+            created_at,
+            owner_id
+          )
+        `)
+        .eq("user_id", user?.id);
+
+      if (memberError) {
+        console.error("所属チーム取得エラー:", memberError);
+      } else if (memberData) {
+        memberData.forEach(member => {
+          const team = member.teams as unknown as Team;
+          if (team && !teamIds.has(team.id)) {
+            allTeams.push({
+              ...team,
+              role: 'member'
+            });
+            teamIds.add(team.id);
+          }
+        });
+      }
+
+      // 作成日でソート
+      allTeams.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      setTeams(allTeams);
     } catch (error) {
       console.error("チーム取得エラー:", error);
       setTeams([]);
@@ -65,13 +116,26 @@ export default function TeamsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* ヘッダー */}
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">マイチーム</h1>
-          <Link
-            href="/teams/create"
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            新しいチームを作成
-          </Link>
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">マイチーム</h1>
+            <p className="text-gray-600 mt-1">
+              所属チーム数: {teams.length}
+            </p>
+          </div>
+          <div className="flex space-x-2">
+            <Link
+              href="/search/teams"
+              className="px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
+            >
+              チームを探す
+            </Link>
+            <Link
+              href="/teams/create"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              新しいチームを作成
+            </Link>
+          </div>
         </div>
 
         {/* チーム一覧 */}
@@ -96,25 +160,35 @@ export default function TeamsPage() {
             <p className="text-gray-500 mb-4">
               最初のチームを作成して、仲間を招待しましょう
             </p>
-            <Link
-              href="/teams/create"
-              className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <svg
-                className="w-5 h-5 mr-2"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            <div className="space-y-2">
+              <Link
+                href="/teams/create"
+                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                />
-              </svg>
-              チームを作成
-            </Link>
+                <svg
+                  className="w-5 h-5 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                  />
+                </svg>
+                チームを作成
+              </Link>
+              <div className="mt-2">
+                <Link
+                  href="/search/teams"
+                  className="text-blue-600 hover:text-blue-700"
+                >
+                  既存のチームを探す →
+                </Link>
+              </div>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -130,9 +204,21 @@ export default function TeamsPage() {
                       {team.name.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  <h3 className="ml-3 text-lg font-semibold text-gray-900">
-                    {team.name}
-                  </h3>
+                  <div className="ml-3 flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {team.name}
+                    </h3>
+                    {team.role === 'owner' && (
+                      <span className="inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                        オーナー
+                      </span>
+                    )}
+                    {team.role === 'member' && (
+                      <span className="inline-block px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">
+                        メンバー
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <p className="text-gray-600 mb-4 line-clamp-2">
                   {team.description || "チームの説明はありません"}
