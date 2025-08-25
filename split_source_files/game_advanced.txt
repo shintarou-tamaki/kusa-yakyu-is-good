@@ -1,0 +1,4502 @@
+# 試合詳細機能 Source Code
+Generated at: 2025-08-25
+File count: 10 files
+Purpose: Advanced game features including progress, players, attendance
+
+================================================================================
+FILE: src/components/game/BattingRecordInput.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import DoublePlaySelector from "./DoublePlaySelector";
+
+interface GamePlayer {
+  id: string;
+  player_name: string;
+  batting_order: number | null;
+  position: string | null;
+}
+
+interface BattingRecord {
+  id: string;
+  game_id: string;
+  player_id: string;
+  inning: number;
+  batting_order: number;
+  result: string;
+  rbi: number;
+  run_scored: boolean;
+  stolen_base: boolean;
+  base_reached?: number;
+  stolen_bases_detail?: any;
+  notes: string;
+}
+
+interface Props {
+  gameId: string;
+  players: GamePlayer[];
+  currentInning: number;
+  isTopBottom: "top" | "bottom";
+  canEdit: boolean;
+  onRecordSaved?: () => void;
+  onInningChange?: (newInning: number, newTopBottom: "top" | "bottom") => void;
+  onGameEnd?: () => void;
+}
+
+const BATTING_RESULTS = {
+  hits: [
+    { value: "hit", label: "安打", dbValue: "安打" },
+    { value: "double", label: "二塁打", dbValue: "二塁打" },
+    { value: "triple", label: "三塁打", dbValue: "三塁打" },
+    { value: "homerun", label: "本塁打", dbValue: "本塁打" },
+  ],
+  outs: [
+    { value: "strikeout", label: "三振", dbValue: "三振" },
+    { value: "groundout", label: "ゴロ", dbValue: "ゴロ" },
+    { value: "flyout", label: "フライ", dbValue: "フライ" },
+    { value: "lineout", label: "ライナー", dbValue: "ライナー" },
+    { value: "sacrifice_bunt", label: "犠打", dbValue: "犠打" },
+    { value: "sacrifice_fly", label: "犠飛", dbValue: "犠飛" },
+    {
+      value: "fielders_choice",
+      label: "フィールダースチョイス",
+      dbValue: "フィールダースチョイス",
+    },
+  ],
+  others: [
+    { value: "walk", label: "四球", dbValue: "四球" },
+    { value: "hit_by_pitch", label: "死球", dbValue: "死球" },
+    { value: "error", label: "エラー", dbValue: "エラー" },
+    { value: "fielders_choice_safe", label: "野選", dbValue: "野選" },
+  ],
+};
+
+const OUT_RESULTS = [
+  "三振",
+  "ゴロ",
+  "フライ",
+  "ライナー",
+  "犠打",
+  "犠飛",
+  "フィールダースチョイス",
+];
+
+const ON_BASE_RESULTS = [
+  "安打",
+  "二塁打",
+  "三塁打",
+  "本塁打",
+  "四球",
+  "死球",
+  "エラー",
+  "野選",
+];
+
+const MAX_INNINGS = 7;
+
+export default function BattingRecordInput({
+  gameId,
+  players,
+  currentInning,
+  isTopBottom,
+  canEdit,
+  onRecordSaved,
+  onInningChange,
+  onGameEnd,
+}: Props) {
+  const supabase = createClientComponentClient();
+
+  const [selectedPlayer, setSelectedPlayer] = useState<GamePlayer | null>(null);
+  const [battingResult, setBattingResult] = useState<string>("");
+  const [rbi, setRbi] = useState<number>(0);
+  const [runScored, setRunScored] = useState<boolean>(false);
+  const [stolenBase, setStolenBase] = useState<boolean>(false);
+  const [baseReached, setBaseReached] = useState<number>(0);
+  const [notes, setNotes] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [currentBatterIndex, setCurrentBatterIndex] = useState(0);
+  const [inningRecords, setInningRecords] = useState<BattingRecord[]>([]);
+  const [currentOuts, setCurrentOuts] = useState(0);
+  const [isInningLocked, setIsInningLocked] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<BattingRecord | null>(
+    null
+  );
+  const [showDoublePlaySelector, setShowDoublePlaySelector] = useState(false);
+  const [pendingBattingData, setPendingBattingData] = useState<any>(null);
+
+  const battingLineup = players
+    .filter((p) => p.batting_order !== null)
+    .sort((a, b) => (a.batting_order || 0) - (b.batting_order || 0));
+
+  const advanceRunners = async (
+    batterBaseReached: number,
+    batterId: string
+  ) => {
+    if (batterBaseReached <= 0) return;
+
+    const { data: currentRunners } = await supabase
+      .from("game_runners")
+      .select("*")
+      .eq("game_id", gameId)
+      .eq("inning", currentInning)
+      .eq("is_active", true)
+      .order("current_base", { ascending: false });
+
+    if (!currentRunners || currentRunners.length === 0) return;
+
+    const basesOccupied = new Set(currentRunners.map((r) => r.current_base));
+
+    for (const runner of currentRunners) {
+      let newBase = runner.current_base;
+
+      if (batterBaseReached === 1) {
+
+        if (runner.current_base === 1) {
+          newBase = 2;
+        } else if (runner.current_base === 2 && basesOccupied.has(1)) {
+          newBase = 3;
+        } else if (
+          runner.current_base === 3 &&
+          basesOccupied.has(2) &&
+          basesOccupied.has(1)
+        ) {
+          newBase = 4;
+        }
+      } else if (batterBaseReached === 2) {
+
+        newBase = Math.min(runner.current_base + 2, 4);
+      } else if (batterBaseReached === 3) {
+
+        newBase = 4;
+      } else if (batterBaseReached === 4) {
+
+        newBase = 4;
+      }
+
+      if (newBase !== runner.current_base) {
+        if (newBase === 4) {
+
+          await supabase
+            .from("game_runners")
+            .update({
+              current_base: 4,
+              is_active: false,
+            })
+            .eq("id", runner.id);
+
+          await supabase
+            .from("game_batting_records")
+            .update({ run_scored: true })
+            .eq("game_id", gameId)
+            .eq("player_id", runner.player_id)
+            .eq("inning", currentInning);
+        } else {
+
+          await supabase
+            .from("game_runners")
+            .update({ current_base: newBase })
+            .eq("id", runner.id);
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    const loadData = async () => {
+      if (canEdit) {
+        await fetchInningRecords();
+        await calculateNextBatter();
+      }
+    };
+    loadData();
+  }, [currentInning, isTopBottom, canEdit, players]);
+
+  const calculateNextBatter = async () => {
+    if (battingLineup.length === 0) return;
+
+    const { data: allGameRecords } = await supabase
+      .from("game_batting_records")
+      .select("*")
+      .eq("game_id", gameId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (!allGameRecords || allGameRecords.length === 0) {
+
+      setCurrentBatterIndex(0);
+      if (!editMode) {
+        setSelectedPlayer(battingLineup[0]);
+      }
+      return;
+    }
+
+    const lastBatterId = allGameRecords[0].player_id;
+    const lastBatterIndex = battingLineup.findIndex(
+      (p) => p.id === lastBatterId
+    );
+
+    let nextIndex = 0;
+    if (lastBatterIndex >= 0) {
+      nextIndex = (lastBatterIndex + 1) % battingLineup.length;
+    } else {
+
+      const currentInningRecordsCount = inningRecords.length;
+      nextIndex = currentInningRecordsCount % battingLineup.length;
+    }
+
+    setCurrentBatterIndex(nextIndex);
+    if (!editMode) {
+      setSelectedPlayer(battingLineup[nextIndex]);
+    }
+  };
+
+  const fetchInningRecords = async () => {
+    const { data, error } = await supabase
+      .from("game_batting_records")
+      .select("*")
+      .eq("game_id", gameId)
+      .eq("inning", currentInning)
+      .order("created_at", { ascending: true });
+
+    if (data) {
+      setInningRecords(data);
+
+      let totalOuts = 0;
+      data.forEach((record) => {
+        if (OUT_RESULTS.includes(record.result)) {
+
+          if (record.notes?.includes("併殺（ダブルプレー）")) {
+
+            totalOuts += 2;
+          } else if (record.notes?.includes("三重殺（トリプルプレー）")) {
+
+            totalOuts += 3;
+          } else {
+
+            totalOuts += 1;
+          }
+        }
+      });
+
+      setCurrentOuts(totalOuts);
+      setIsInningLocked(totalOuts >= 3);
+    }
+  };
+
+  const resetForm = () => {
+    setBattingResult("");
+    setRbi(0);
+    setRunScored(false);
+    setStolenBase(false);
+    setBaseReached(0);
+    setNotes("");
+    setEditMode(false);
+    setEditingRecord(null);
+    setShowDoublePlaySelector(false);
+    setPendingBattingData(null);
+  };
+
+  const handleDoublePlay = async (runnerIds: string[]) => {
+    try {
+      setSaving(true);
+
+      if (runnerIds.length > 0) {
+
+        const { error: runnerError } = await supabase
+          .from("game_runners")
+          .update({ is_active: false })
+          .in("id", runnerIds);
+
+        if (runnerError) throw runnerError;
+      }
+
+      if (pendingBattingData) {
+        let noteText = "";
+        if (runnerIds.length === 1) {
+          noteText = "併殺（ダブルプレー）";
+        } else if (runnerIds.length === 2) {
+          noteText = "三重殺（トリプルプレー）";
+        }
+
+        const { error } = await supabase.from("game_batting_records").insert({
+          ...pendingBattingData,
+          notes: runnerIds.length > 0 ? noteText : pendingBattingData.notes,
+        });
+
+        if (error) throw error;
+      }
+
+      const additionalOuts = 1 + runnerIds.length;
+      const newTotalOuts = currentOuts + additionalOuts;
+
+      if (runnerIds.length === 0) {
+
+        setMessage(newTotalOuts >= 3 ? "スリーアウトチェンジ！" : "アウト！");
+      } else if (runnerIds.length === 1) {
+
+        setMessage(
+          newTotalOuts >= 3
+            ? "併殺！ダブルプレーでチェンジ！"
+            : "併殺！ダブルプレー！"
+        );
+      } else if (runnerIds.length === 2) {
+
+        setMessage("三重殺！トリプルプレーでチェンジ！");
+      }
+
+      setShowDoublePlaySelector(false);
+      setPendingBattingData(null);
+      resetForm();
+
+      const { data } = await supabase
+        .from("game_batting_records")
+        .select("*")
+        .eq("game_id", gameId)
+        .eq("inning", currentInning)
+        .order("created_at", { ascending: true });
+
+      if (data) {
+        setInningRecords(data);
+      }
+
+      setCurrentOuts(newTotalOuts);
+      setIsInningLocked(newTotalOuts >= 3);
+
+      await updateGameScore();
+      await calculateNextBatter();
+
+      if (newTotalOuts >= 3) {
+
+        await supabase
+          .from("game_runners")
+          .update({ is_active: false })
+          .eq("game_id", gameId)
+          .eq("inning", currentInning);
+
+        if (currentInning >= MAX_INNINGS && isTopBottom === "bottom") {
+
+          if (onGameEnd) {
+            onGameEnd();
+          }
+        } else if (onInningChange) {
+
+          const nextTopBottom = isTopBottom === "top" ? "bottom" : "top";
+          const nextInning =
+            isTopBottom === "bottom" ? currentInning + 1 : currentInning;
+
+          onInningChange(nextInning, nextTopBottom);
+        }
+      } else {
+
+        if (onRecordSaved) onRecordSaved();
+      }
+    } catch (error) {
+      console.error("併殺処理エラー:", error);
+      setMessage("エラーが発生しました");
+    } finally {
+      setSaving(false);
+      setShowDoublePlaySelector(false);
+    }
+  };
+
+  const handleSaveRecord = async () => {
+    if (!selectedPlayer || !battingResult) {
+      setMessage("選手と結果を選択してください");
+      return;
+    }
+
+    const allResults = [
+      ...BATTING_RESULTS.hits,
+      ...BATTING_RESULTS.outs,
+      ...BATTING_RESULTS.others,
+    ];
+    const selectedResult = allResults.find((r) => r.value === battingResult);
+    const dbValue = selectedResult?.dbValue || battingResult;
+
+    if (ON_BASE_RESULTS.includes(dbValue) && baseReached === 0) {
+      setMessage("到達塁を選択してください");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+
+      const isOut = OUT_RESULTS.includes(dbValue);
+
+      if (editingRecord && editMode) {
+
+        const { error } = await supabase
+          .from("game_batting_records")
+          .update({
+            player_id: selectedPlayer.id,
+            result: dbValue,
+            rbi: rbi,
+            run_scored: runScored,
+            stolen_base: stolenBase,
+            base_reached: baseReached,
+            notes: notes || null,
+          })
+          .eq("id", editingRecord.id);
+
+        if (error) throw error;
+
+        await supabase
+          .from("game_runners")
+          .delete()
+          .eq("game_id", gameId)
+          .eq("player_id", selectedPlayer.id)
+          .eq("inning", currentInning);
+
+        if (baseReached > 0 && baseReached < 4) {
+          await supabase.from("game_runners").insert({
+            game_id: gameId,
+            inning: currentInning,
+            player_id: selectedPlayer.id,
+            player_name: selectedPlayer.player_name,
+            current_base: baseReached,
+            is_active: true,
+          });
+        }
+
+        setEditMode(false);
+        setEditingRecord(null);
+        setMessage("記録を更新しました");
+      } else {
+
+        const recordData = {
+          game_id: gameId,
+          player_id: selectedPlayer.id,
+          inning: currentInning,
+          batting_order: selectedPlayer.batting_order || 0,
+          result: dbValue,
+          rbi: rbi,
+          run_scored: runScored || baseReached === 4,
+          stolen_base: stolenBase,
+          base_reached: baseReached,
+          notes: notes || null,
+        };
+
+        if (dbValue === "ゴロ") {
+
+          const { data: currentRunners } = await supabase
+            .from("game_runners")
+            .select("*")
+            .eq("game_id", gameId)
+            .eq("inning", currentInning)
+            .eq("is_active", true)
+            .in("current_base", [1, 2, 3]);
+
+          if (currentRunners && currentRunners.length > 0) {
+
+            setPendingBattingData(recordData);
+            setShowDoublePlaySelector(true);
+            setSaving(false);
+            return;
+          }
+        }
+
+        const { error } = await supabase
+          .from("game_batting_records")
+          .insert(recordData);
+
+        if (error) throw error;
+
+        if (!error && baseReached > 0 && baseReached < 4) {
+
+          await advanceRunners(baseReached, selectedPlayer.id);
+
+          await supabase.from("game_runners").insert({
+            game_id: gameId,
+            inning: currentInning,
+            player_id: selectedPlayer.id,
+            player_name: selectedPlayer.player_name,
+            current_base: baseReached,
+            is_active: true,
+          });
+        } else if (!error && baseReached > 0) {
+
+          await advanceRunners(baseReached, selectedPlayer.id);
+        }
+
+        const newOuts = isOut ? currentOuts + 1 : currentOuts;
+        setCurrentOuts(newOuts);
+
+        setMessage(
+          newOuts >= 3 ? "スリーアウトチェンジ！" : "記録を保存しました"
+        );
+
+        if (newOuts >= 3) {
+          handleInningChange();
+        }
+      }
+
+      resetForm();
+      await fetchInningRecords();
+      await updateGameScore();
+      await calculateNextBatter();
+
+      if (onRecordSaved) onRecordSaved();
+    } catch (error) {
+      console.error("保存エラー:", error);
+      setMessage("保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleInningChange = async () => {
+
+    await supabase
+      .from("game_runners")
+      .update({ is_active: false })
+      .eq("game_id", gameId)
+      .eq("inning", currentInning);
+
+    setCurrentOuts(0);
+    setIsInningLocked(false);
+
+    if (currentInning >= MAX_INNINGS && isTopBottom === "bottom") {
+
+      if (onGameEnd) {
+        onGameEnd();
+      }
+    } else if (onInningChange) {
+
+      const nextTopBottom = isTopBottom === "top" ? "bottom" : "top";
+      const nextInning =
+        isTopBottom === "bottom" ? currentInning + 1 : currentInning;
+      onInningChange(nextInning, nextTopBottom);
+    }
+  };
+
+  const updateGameScore = async () => {
+
+    const { data: allRecords } = await supabase
+      .from("game_batting_records")
+      .select("*")
+      .eq("game_id", gameId)
+      .eq("run_scored", true);
+
+    if (allRecords) {
+      const totalRuns = allRecords.length;
+
+      await supabase
+        .from("games")
+        .update({
+          home_score: totalRuns,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", gameId);
+    }
+  };
+
+  const handleEditRecord = (record: BattingRecord) => {
+    setEditMode(true);
+    setEditingRecord(record);
+    const player = players.find((p) => p.id === record.player_id);
+    if (player) {
+      setSelectedPlayer(player);
+    }
+
+    const allResults = [
+      ...BATTING_RESULTS.hits,
+      ...BATTING_RESULTS.outs,
+      ...BATTING_RESULTS.others,
+    ];
+    const englishResult = allResults.find((r) => r.dbValue === record.result);
+    setBattingResult(englishResult?.value || "");
+    setRbi(record.rbi);
+    setRunScored(record.run_scored);
+    setStolenBase(record.stolen_base || false);
+    setBaseReached(record.base_reached || 0);
+    setNotes(record.notes || "");
+  };
+
+  const handleDeleteRecord = async (recordId: string) => {
+    if (!confirm("この記録を削除しますか？")) return;
+
+    try {
+
+      const { data: recordToDelete } = await supabase
+        .from("game_batting_records")
+        .select("*")
+        .eq("id", recordId)
+        .single();
+
+      if (recordToDelete) {
+
+        const { error } = await supabase
+          .from("game_batting_records")
+          .delete()
+          .eq("id", recordId);
+
+        if (error) throw error;
+
+        await supabase
+          .from("game_runners")
+          .delete()
+          .eq("game_id", gameId)
+          .eq("player_id", recordToDelete.player_id)
+          .eq("inning", currentInning);
+
+        await fetchInningRecords();
+        await updateGameScore();
+        setMessage("記録を削除しました");
+      }
+    } catch (error) {
+      console.error("削除エラー:", error);
+      setMessage("削除に失敗しました");
+    }
+  };
+
+  const isOnBaseResult = ON_BASE_RESULTS.includes(
+    BATTING_RESULTS.hits
+      .concat(BATTING_RESULTS.outs)
+      .concat(BATTING_RESULTS.others)
+      .find((r) => r.value === battingResult)?.dbValue || ""
+  );
+
+  return (
+    <div className="bg-white p-4 rounded-lg shadow-sm">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-semibold">
+          {currentInning}回{isTopBottom === "top" ? "表" : "裏"}の打撃入力
+        </h3>
+        <div className="flex items-center space-x-4">
+          <span className="text-sm text-gray-600">
+            アウト: <span className="font-bold text-lg">{currentOuts}</span> / 3
+          </span>
+          {isInningLocked && (
+            <span className="text-red-600 font-semibold">イニング終了</span>
+          )}
+        </div>
+      </div>
+
+      {!isInningLocked && (
+        <div className="space-y-4">
+          {}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              打者
+            </label>
+            <select
+              value={selectedPlayer?.id || ""}
+              onChange={(e) => {
+                const player = players.find((p) => p.id === e.target.value);
+                setSelectedPlayer(player || null);
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={saving}
+            >
+              <option value="">選手を選択</option>
+              {battingLineup.map((player) => (
+                <option key={player.id} value={player.id}>
+                  {player.batting_order}番 - {player.player_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              打撃結果
+            </label>
+            <div className="space-y-2">
+              {}
+              <div>
+                <span className="text-sm text-gray-600">ヒット</span>
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  {BATTING_RESULTS.hits.map((result) => (
+                    <button
+                      key={result.value}
+                      type="button"
+                      onClick={() => {
+                        setBattingResult(result.value);
+
+                        if (result.value === "homerun") {
+                          setBaseReached(4);
+                          setRunScored(true);
+                        }
+                      }}
+                      className={`px-3 py-2 text-sm rounded-lg border ${
+                        battingResult === result.value
+                          ? "bg-blue-500 text-white border-blue-500"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                      }`}
+                      disabled={saving}
+                    >
+                      {result.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {}
+              <div>
+                <span className="text-sm text-gray-600">アウト</span>
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  {BATTING_RESULTS.outs.map((result) => (
+                    <button
+                      key={result.value}
+                      type="button"
+                      onClick={() => {
+                        setBattingResult(result.value);
+                        setBaseReached(0);
+                      }}
+                      className={`px-3 py-2 text-sm rounded-lg border ${
+                        battingResult === result.value
+                          ? "bg-red-500 text-white border-red-500"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                      }`}
+                      disabled={saving}
+                    >
+                      {result.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {}
+              <div>
+                <span className="text-sm text-gray-600">その他</span>
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  {BATTING_RESULTS.others.map((result) => (
+                    <button
+                      key={result.value}
+                      type="button"
+                      onClick={() => setBattingResult(result.value)}
+                      className={`px-3 py-2 text-sm rounded-lg border ${
+                        battingResult === result.value
+                          ? "bg-green-500 text-white border-green-500"
+                          : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                      }`}
+                      disabled={saving}
+                    >
+                      {result.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {}
+          {isOnBaseResult && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                到達塁 <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={baseReached}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  setBaseReached(value);
+
+                  if (value === 4) {
+                    setRunScored(true);
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                disabled={saving || battingResult === "homerun"}
+              >
+                <option value={0}>選択してください</option>
+                <option value={1}>一塁</option>
+                <option value={2}>二塁</option>
+                <option value={3}>三塁</option>
+                <option value={4}>本塁（得点）</option>
+              </select>
+              {battingResult === "homerun" && (
+                <p className="text-xs text-gray-500 mt-1">
+                  本塁打のため自動的に本塁が選択されています
+                </p>
+              )}
+            </div>
+          )}
+
+          {}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              打点
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="4"
+              value={rbi}
+              onChange={(e) => setRbi(Number(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={saving}
+            />
+          </div>
+
+          {}
+          <div className="flex space-x-4">
+            <div className="flex items-center">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={runScored}
+                  onChange={(e) => setRunScored(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  disabled={saving || baseReached === 4}
+                />
+                <span className="text-sm font-medium text-gray-700">得点</span>
+              </label>
+            </div>
+            <div className="flex items-center">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={stolenBase}
+                  onChange={(e) => setStolenBase(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  disabled={saving}
+                />
+                <span className="text-sm font-medium text-gray-700">盗塁</span>
+              </label>
+            </div>
+          </div>
+
+          {}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              メモ（任意）
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="例: センター前ヒット"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={saving}
+            />
+          </div>
+
+          {}
+          <div className="flex justify-end space-x-2">
+            {editMode && (
+              <button
+                type="button"
+                onClick={async () => {
+                  resetForm();
+                  await calculateNextBatter();
+                }}
+                className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300"
+                disabled={saving}
+              >
+                キャンセル
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSaveRecord}
+              disabled={
+                saving ||
+                !selectedPlayer ||
+                !battingResult ||
+                (isOnBaseResult && baseReached === 0)
+              }
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? "保存中..." : editMode ? "更新" : "保存"}
+            </button>
+          </div>
+
+          {}
+          {message && (
+            <div
+              className={`text-center py-2 px-4 rounded-lg ${
+                message.includes("失敗")
+                  ? "bg-red-100 text-red-700"
+                  : "bg-green-100 text-green-700"
+              }`}
+            >
+              {message}
+            </div>
+          )}
+        </div>
+      )}
+
+      {}
+      <div className="mt-6">
+        <h4 className="text-sm font-semibold text-gray-700 mb-2">
+          {currentInning}回{isTopBottom === "top" ? "表" : "裏"}の記録
+        </h4>
+        {inningRecords.length === 0 ? (
+          <p className="text-gray-500 text-sm">まだ記録がありません</p>
+        ) : (
+          <div className="space-y-2">
+            {inningRecords.map((record, index) => {
+              const player = players.find((p) => p.id === record.player_id);
+              const isDoublePlay =
+                record.notes?.includes("併殺（ダブルプレー）");
+              const isTriplePlay =
+                record.notes?.includes("三重殺（トリプルプレー）");
+
+              return (
+                <div
+                  key={record.id}
+                  className="flex items-center justify-between p-2 bg-gray-50 rounded"
+                >
+                  <div className="flex-1">
+                    <span className="font-medium">{index + 1}. </span>
+                    <span>{player?.player_name}</span>
+                    <span className="ml-2 text-sm text-gray-600">
+                      {record.result}
+                    </span>
+                    {isDoublePlay && (
+                      <span className="ml-2 text-sm font-bold text-red-600">
+                        併殺(2アウト)
+                      </span>
+                    )}
+                    {isTriplePlay && (
+                      <span className="ml-2 text-sm font-bold text-red-600">
+                        三重殺(3アウト)
+                      </span>
+                    )}
+                    {record.rbi > 0 && (
+                      <span className="ml-2 text-sm text-blue-600">
+                        {record.rbi}打点
+                      </span>
+                    )}
+                    {record.run_scored && (
+                      <span className="ml-2 text-sm text-green-600">得点</span>
+                    )}
+                    {record.notes && !isDoublePlay && !isTriplePlay && (
+                      <span className="ml-2 text-sm text-gray-500">
+                        ({record.notes})
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => handleEditRecord(record)}
+                      className="text-blue-600 hover:text-blue-700 text-sm"
+                      disabled={isInningLocked}
+                    >
+                      編集
+                    </button>
+                    <button
+                      onClick={() => handleDeleteRecord(record.id)}
+                      className="text-red-600 hover:text-red-700 text-sm"
+                      disabled={isInningLocked}
+                    >
+                      削除
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {}
+      {showDoublePlaySelector && (
+        <DoublePlaySelector
+          gameId={gameId}
+          currentInning={currentInning}
+          onDoublePlaySelect={handleDoublePlay}
+          onCancel={() => {
+            setShowDoublePlaySelector(false);
+            setPendingBattingData(null);
+            setSaving(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/DoublePlaySelector.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface Runner {
+  id: string;
+  player_id: string;
+  player_name: string;
+  current_base: number;
+}
+
+interface Props {
+  gameId: string;
+  currentInning: number;
+  onDoublePlaySelect: (runnerIds: string[]) => void;
+  onCancel: () => void;
+}
+
+export default function DoublePlaySelector({
+  gameId,
+  currentInning,
+  onDoublePlaySelect,
+  onCancel,
+}: Props) {
+  const supabase = createClientComponentClient();
+  const [runners, setRunners] = useState<Runner[]>([]);
+  const [selectedRunners, setSelectedRunners] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchRunners();
+  }, [gameId, currentInning]);
+
+  const fetchRunners = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_runners")
+        .select("*")
+        .eq("game_id", gameId)
+        .eq("inning", currentInning)
+        .eq("is_active", true)
+        .in("current_base", [1, 2, 3])
+        .order("current_base", { ascending: true });
+
+      if (error) throw error;
+      setRunners(data || []);
+    } catch (error) {
+      console.error("ランナー取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getBaseLabel = (base: number) => {
+    switch (base) {
+      case 1:
+        return "一塁";
+      case 2:
+        return "二塁";
+      case 3:
+        return "三塁";
+      default:
+        return "";
+    }
+  };
+
+  const handleRunnerToggle = (runnerId: string) => {
+    setSelectedRunners((prev) => {
+      if (prev.includes(runnerId)) {
+        return prev.filter((id) => id !== runnerId);
+      } else {
+
+        if (prev.length >= 2) {
+
+          return [...prev.slice(1), runnerId];
+        }
+        return [...prev, runnerId];
+      }
+    });
+  };
+
+  const handleConfirm = () => {
+    if (selectedRunners.length === 0) {
+      alert("アウトになるランナーを選択してください");
+      return;
+    }
+    onDoublePlaySelect(selectedRunners);
+  };
+
+  if (loading) {
+    return <div className="text-center py-4">読み込み中...</div>;
+  }
+
+  if (runners.length === 0) {
+
+    onDoublePlaySelect([]);
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <h3 className="text-lg font-bold mb-4">併殺プレーの選択</h3>
+
+        <div className="mb-4">
+          <p className="text-sm text-gray-600 mb-2">
+            打者はアウトになります。追加でアウトになるランナーを選択してください。
+          </p>
+          <p className="text-xs text-gray-500">
+            ※最大2人まで選択可能（トリプルプレーまで対応）
+          </p>
+        </div>
+
+        <div className="space-y-2 mb-6">
+          {runners.map((runner) => (
+            <label
+              key={runner.id}
+              className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+            >
+              <input
+                type="checkbox"
+                checked={selectedRunners.includes(runner.id)}
+                onChange={() => handleRunnerToggle(runner.id)}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              />
+              <div className="flex-1">
+                <div className="font-medium">{runner.player_name}</div>
+                <div className="text-sm text-gray-500">
+                  {getBaseLabel(runner.current_base)}ランナー
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <div className="text-sm text-gray-500 mb-4">
+          <p>※併殺が成立しない場合（通常のゴロアウト）は、</p>
+          <p>　ランナーを選択せずに「確定」を押してください</p>
+        </div>
+
+        <div className="flex justify-end space-x-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleConfirm}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            確定（
+            {selectedRunners.length === 0
+              ? "打者のみ"
+              : selectedRunners.length === 1
+              ? "ダブルプレー"
+              : "トリプルプレー"}
+            ）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/InlineScoreInput.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface InlineScoreInputProps {
+  gameId: string;
+  canEdit: boolean;
+  onScoreUpdate?: () => void;
+}
+
+interface ScoreData {
+  inning: number;
+  top_score: number | null;
+  bottom_score: number | null;
+}
+
+interface Game {
+  id: string;
+  home_team_id: string;
+  home_score: number;
+  opponent_score: number;
+  status: string;
+}
+
+export default function InlineScoreInput({
+  gameId,
+  canEdit,
+  onScoreUpdate,
+}: InlineScoreInputProps) {
+  const [scores, setScores] = useState<ScoreData[]>([]);
+  const [isMyTeamBatFirst, setIsMyTeamBatFirst] = useState<boolean>(true);
+  const [totalInnings, setTotalInnings] = useState(7);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [game, setGame] = useState<Game | null>(null);
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    fetchGameAndScores();
+  }, [gameId]);
+
+  const fetchGameAndScores = async () => {
+    try {
+
+      const { data: gameData } = await supabase
+        .from("games")
+        .select("*")
+        .eq("id", gameId)
+        .single();
+
+      if (gameData) {
+        setGame(gameData);
+      }
+
+      const { data: scoresData } = await supabase
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("inning", { ascending: true });
+
+      if (scoresData && scoresData.length > 0) {
+
+        const firstScore = scoresData[0];
+        if (firstScore.is_my_team_bat_first !== null) {
+          setIsMyTeamBatFirst(firstScore.is_my_team_bat_first);
+        }
+
+        const maxInning = Math.max(...scoresData.map((s) => s.inning));
+        setTotalInnings(Math.max(7, maxInning));
+
+        const allScores: ScoreData[] = [];
+        for (let i = 1; i <= Math.max(7, maxInning); i++) {
+          const existing = scoresData.find((s) => s.inning === i);
+          allScores.push({
+            inning: i,
+            top_score: existing?.top_score ?? null,
+            bottom_score: existing?.bottom_score ?? null,
+          });
+        }
+        setScores(allScores);
+      } else {
+
+        initializeScores(7);
+      }
+    } catch (error) {
+      console.error("データ取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const initializeScores = (innings: number) => {
+    const newScores: ScoreData[] = [];
+    for (let i = 1; i <= innings; i++) {
+      newScores.push({
+        inning: i,
+        top_score: null,
+        bottom_score: null,
+      });
+    }
+    setScores(newScores);
+  };
+
+  const handleScoreChange = (inning: number, isTop: boolean, value: string) => {
+    const numValue = value === "" ? null : parseInt(value);
+    setScores((prev) =>
+      prev.map((s) =>
+        s.inning === inning
+          ? { ...s, [isTop ? "top_score" : "bottom_score"]: numValue }
+          : s
+      )
+    );
+  };
+
+  const addInning = () => {
+    if (totalInnings < 12) {
+      setTotalInnings((prev) => prev + 1);
+      setScores((prev) => [
+        ...prev,
+        {
+          inning: prev.length + 1,
+          top_score: null,
+          bottom_score: null,
+        },
+      ]);
+    }
+  };
+
+  const removeLastInning = () => {
+    if (
+      totalInnings > 7 &&
+      scores[totalInnings - 1].top_score === null &&
+      scores[totalInnings - 1].bottom_score === null
+    ) {
+      setTotalInnings((prev) => prev - 1);
+      setScores((prev) => prev.slice(0, -1));
+    }
+  };
+
+  const calculateTotal = (isTop: boolean) => {
+    return scores.reduce((sum, s) => {
+      const score = isTop ? s.top_score : s.bottom_score;
+      return sum + (score || 0);
+    }, 0);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+
+      await supabase.from("game_scores").delete().eq("game_id", gameId);
+
+      const scoresToInsert = scores
+        .filter((s) => s.top_score !== null || s.bottom_score !== null)
+        .map((s) => ({
+          game_id: gameId,
+          inning: s.inning,
+          top_score: s.top_score,
+          bottom_score: s.bottom_score,
+          is_my_team_bat_first: isMyTeamBatFirst,
+        }));
+
+      if (scoresToInsert.length > 0) {
+        const { error: insertError } = await supabase
+          .from("game_scores")
+          .insert(scoresToInsert);
+
+        if (insertError) throw insertError;
+      }
+
+      const homeTotal = isMyTeamBatFirst
+        ? calculateTotal(true)
+        : calculateTotal(false);
+      const opponentTotal = isMyTeamBatFirst
+        ? calculateTotal(false)
+        : calculateTotal(true);
+
+      const { error: updateError } = await supabase
+        .from("games")
+        .update({
+          home_score: homeTotal,
+          opponent_score: opponentTotal,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", gameId);
+
+      if (updateError) throw updateError;
+
+      setEditMode(false);
+      if (onScoreUpdate) {
+        onScoreUpdate();
+      }
+
+      fetchGameAndScores();
+    } catch (error) {
+      console.error("保存エラー:", error);
+      alert("保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const myTeamLabel = isMyTeamBatFirst ? "表（先攻）" : "裏（後攻）";
+  const opponentLabel = isMyTeamBatFirst ? "裏（後攻）" : "表（先攻）";
+
+  return (
+    <div className="bg-white rounded-lg shadow">
+      <div className="px-6 py-4 border-b flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-gray-900">スコアボード</h3>
+        {canEdit && !editMode && (
+          <button
+            onClick={() => setEditMode(true)}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+          >
+            スコア編集
+          </button>
+        )}
+        {canEdit && editMode && (
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setEditMode(false)}
+              className="px-4 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400"
+            >
+              {saving ? "保存中..." : "保存"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {}
+      {editMode && (
+        <div className="px-6 py-3 bg-blue-50 border-b">
+          <label className="text-sm font-medium text-gray-700">
+            マイチームは：
+            <select
+              value={isMyTeamBatFirst ? "first" : "second"}
+              onChange={(e) => setIsMyTeamBatFirst(e.target.value === "first")}
+              className="ml-2 px-3 py-1 border border-gray-300 rounded-md text-sm"
+            >
+              <option value="first">先攻</option>
+              <option value="second">後攻</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      <div className="p-6">
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead>
+              <tr className="border-b">
+                <th className="px-3 py-2 text-left text-sm font-medium text-gray-700">
+                  回
+                </th>
+                {scores.map((_, index) => (
+                  <th
+                    key={index}
+                    className="px-3 py-2 text-center text-sm font-medium text-gray-700 min-w-[50px]"
+                  >
+                    {index + 1}
+                  </th>
+                ))}
+                <th className="px-3 py-2 text-center text-sm font-bold text-gray-900 bg-gray-100">
+                  計
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {}
+              <tr className="border-b">
+                <td className="px-3 py-2 text-sm font-medium text-gray-700">
+                  {isMyTeamBatFirst ? "マイチーム" : "相手"}
+                </td>
+                {scores.map((score) => (
+                  <td key={score.inning} className="px-3 py-2 text-center">
+                    {editMode ? (
+                      <input
+                        type="number"
+                        min="0"
+                        max="99"
+                        value={score.top_score ?? ""}
+                        onChange={(e) =>
+                          handleScoreChange(score.inning, true, e.target.value)
+                        }
+                        className="w-12 px-1 py-1 text-center border border-gray-300 rounded text-sm"
+                      />
+                    ) : (
+                      <span className="text-sm">{score.top_score ?? "-"}</span>
+                    )}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-center text-lg font-bold bg-gray-100">
+                  {calculateTotal(true)}
+                </td>
+              </tr>
+
+              {}
+              <tr className="border-b">
+                <td className="px-3 py-2 text-sm font-medium text-gray-700">
+                  {!isMyTeamBatFirst ? "マイチーム" : "相手"}
+                </td>
+                {scores.map((score) => (
+                  <td key={score.inning} className="px-3 py-2 text-center">
+                    {editMode ? (
+                      <input
+                        type="number"
+                        min="0"
+                        max="99"
+                        value={score.bottom_score ?? ""}
+                        onChange={(e) =>
+                          handleScoreChange(score.inning, false, e.target.value)
+                        }
+                        className="w-12 px-1 py-1 text-center border border-gray-300 rounded text-sm"
+                      />
+                    ) : (
+                      <span className="text-sm">
+                        {score.bottom_score ?? "-"}
+                      </span>
+                    )}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-center text-lg font-bold bg-gray-100">
+                  {calculateTotal(false)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {}
+        {editMode && (
+          <div className="mt-4 flex justify-end space-x-2">
+            {totalInnings > 7 && (
+              <button
+                onClick={removeLastInning}
+                className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
+              >
+                最終回を削除
+              </button>
+            )}
+            {totalInnings < 12 && (
+              <button
+                onClick={addInning}
+                className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+              >
+                延長回を追加
+              </button>
+            )}
+          </div>
+        )}
+
+        {}
+        {!editMode && game && game.status === "completed" && (
+          <div className="mt-4 p-4 bg-gray-50 rounded-lg text-center">
+            <p className="text-lg font-bold">
+              {game.home_score > game.opponent_score ? (
+                <span className="text-blue-600">勝利！</span>
+              ) : game.home_score < game.opponent_score ? (
+                <span className="text-red-600">敗北</span>
+              ) : (
+                <span className="text-gray-600">引き分け</span>
+              )}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/OperationTasksDisplay.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface OperationTask {
+  id: string;
+  game_id: string;
+  task_type: string;
+  person_name: string;
+  team_member_id: string | null;
+}
+
+interface OperationTasksDisplayProps {
+  gameId: string;
+}
+
+const TASK_LABELS: { [key: string]: { label: string; icon: string } } = {
+  equipment: { label: "用具の保管・運搬", icon: "🎒" },
+  scheduling: { label: "試合を組む", icon: "📅" },
+  coordination: { label: "対戦相手との調整", icon: "🤝" },
+  ground: { label: "グラウンドを用意", icon: "🏟️" },
+  attendance: { label: "出欠を取る", icon: "📋" },
+  umpire: { label: "審判の手配", icon: "⚾" },
+  helper: { label: "助っ人の手配", icon: "👥" },
+  media: { label: "写真・動画撮影", icon: "📸" },
+  accounting: { label: "会計報告", icon: "💰" },
+};
+
+export default function OperationTasksDisplay({
+  gameId,
+}: OperationTasksDisplayProps) {
+  const [tasks, setTasks] = useState<OperationTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    if (gameId) {
+      fetchTasks();
+    }
+  }, [gameId]);
+
+  const fetchTasks = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_operation_tasks")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (error) {
+        console.error("運営タスク取得エラー:", error);
+      } else if (data) {
+        setTasks(data);
+      }
+    } catch (error) {
+      console.error("エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (tasks.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg shadow-lg border border-orange-200">
+      <div className="px-6 py-4 border-b border-orange-200 bg-white bg-opacity-70 rounded-t-lg">
+        <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+          <span className="text-2xl mr-2">🙏</span>
+          この試合を支えてくれた方々
+        </h3>
+      </div>
+
+      <div className="p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {tasks.map((task) => {
+            const taskInfo = TASK_LABELS[task.task_type];
+            if (!taskInfo) return null;
+
+            return (
+              <div
+                key={task.id}
+                className="bg-white rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-start">
+                  <span className="text-2xl mr-3">{taskInfo.icon}</span>
+                  <div className="flex-1">
+                    <p className="text-sm text-gray-600 mb-1">
+                      {taskInfo.label}
+                    </p>
+                    <p className="font-semibold text-gray-900">
+                      {task.person_name}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="text-center mt-6 p-4 bg-white bg-opacity-60 rounded-lg">
+          <p className="text-lg font-bold text-orange-800">
+            ✨ ありがとうございます！ ✨
+          </p>
+          <p className="text-sm text-gray-700 mt-2">
+            みんなが野球を楽しめるのは、あなたたちのおかげです
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/PitchingRecordInput.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AlertCircle, Save, Trophy, Edit2 } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+interface GamePlayer {
+  id: string;
+  game_id: string;
+  player_name: string;
+  team_member_id: string | null;
+  is_starter: boolean;
+  batting_order: number | null;
+  position: string | null;
+  is_active: boolean;
+}
+
+interface PitchingRecord {
+  id?: string;
+  game_id: string;
+  player_id: string;
+  innings_pitched: number;
+  hits_allowed: number;
+  runs_allowed: number;
+  earned_runs: number;
+  strikeouts: number;
+  walks: number;
+  home_runs_allowed: number;
+}
+
+interface Props {
+  gameId: string;
+  players: GamePlayer[];
+  canEdit: boolean;
+  onRecordSaved?: () => void;
+}
+
+export default function PitchingRecordInput({ gameId, players, canEdit, onRecordSaved }: Props) {
+  const supabase = createClientComponentClient();
+
+  const [selectedPitcher, setSelectedPitcher] = useState<string>("");
+  const [pitchingData, setPitchingData] = useState<Omit<PitchingRecord, 'id' | 'game_id' | 'player_id'>>({
+    innings_pitched: 0,
+    hits_allowed: 0,
+    runs_allowed: 0,
+    earned_runs: 0,
+    strikeouts: 0,
+    walks: 0,
+    home_runs_allowed: 0
+  });
+  const [existingRecords, setExistingRecords] = useState<PitchingRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const pitcherCandidates = players;
+
+  useEffect(() => {
+    fetchExistingRecords();
+  }, [gameId]);
+
+  const fetchExistingRecords = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_pitching_records")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (error) throw error;
+      if (data) {
+        setExistingRecords(data);
+      }
+    } catch (error) {
+      console.error("投手記録取得エラー:", error);
+    }
+  };
+
+  const handleInningsPitchedChange = (value: string) => {
+  const floatValue = parseFloat(value);
+  if (isNaN(floatValue) || floatValue < 0) return;
+
+  const wholeInnings = Math.floor(floatValue);
+  const outs = Math.round((floatValue - wholeInnings) * 10);
+
+  const adjustedInnings = wholeInnings + Math.floor(outs / 3);
+  const adjustedOuts = outs % 3;
+
+  const finalValue = adjustedInnings + (adjustedOuts / 10);
+
+  setPitchingData(prev => ({ ...prev, innings_pitched: finalValue }));
+};
+
+  const handleSave = async () => {
+    if (!selectedPitcher) {
+      setMessage({ type: 'error', text: '投手を選択してください' });
+      return;
+    }
+
+    setLoading(true);
+    setMessage(null);
+
+    try {
+      const recordData = {
+        game_id: gameId,
+        player_id: selectedPitcher,
+        ...pitchingData
+      };
+
+      if (editingRecord) {
+
+        const { error } = await supabase
+          .from("game_pitching_records")
+          .update(recordData)
+          .eq("id", editingRecord);
+
+        if (error) throw error;
+        setMessage({ type: 'success', text: '投手記録を更新しました' });
+        setEditingRecord(null);
+      } else {
+
+        const { error } = await supabase
+          .from("game_pitching_records")
+          .insert(recordData);
+
+        if (error) throw error;
+        setMessage({ type: 'success', text: '投手記録を保存しました' });
+      }
+
+      setSelectedPitcher("");
+      setPitchingData({
+        innings_pitched: 0,
+        hits_allowed: 0,
+        runs_allowed: 0,
+        earned_runs: 0,
+        strikeouts: 0,
+        walks: 0,
+        home_runs_allowed: 0
+      });
+
+      await fetchExistingRecords();
+      if (onRecordSaved) onRecordSaved();
+    } catch (error) {
+      console.error("保存エラー:", error);
+      setMessage({ type: 'error', text: '保存に失敗しました' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEdit = (record: PitchingRecord) => {
+    setEditingRecord(record.id || null);
+    setSelectedPitcher(record.player_id);
+    setPitchingData({
+      innings_pitched: record.innings_pitched,
+      hits_allowed: record.hits_allowed,
+      runs_allowed: record.runs_allowed,
+      earned_runs: record.earned_runs,
+      strikeouts: record.strikeouts,
+      walks: record.walks,
+      home_runs_allowed: record.home_runs_allowed
+    });
+  };
+
+  const handleDelete = async (recordId: string) => {
+    if (!confirm("この投手記録を削除しますか？")) return;
+
+    try {
+      const { error } = await supabase
+        .from("game_pitching_records")
+        .delete()
+        .eq("id", recordId);
+
+      if (error) throw error;
+
+      setMessage({ type: 'success', text: '投手記録を削除しました' });
+      await fetchExistingRecords();
+      if (onRecordSaved) onRecordSaved();
+    } catch (error) {
+      console.error("削除エラー:", error);
+      setMessage({ type: 'error', text: '削除に失敗しました' });
+    }
+  };
+
+  const formatInningsPitched = (innings: number) => {
+
+  if (innings % 1 === 0) {
+    return `${innings}`;
+  }
+  return innings.toFixed(1);
+};
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-5 w-5" />
+          投手記録
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {message && (
+          <Alert variant={message.type === 'error' ? 'destructive' : 'default'}>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{message.text}</AlertDescription>
+          </Alert>
+        )}
+
+        {}
+        {existingRecords.length > 0 && (
+          <div className="space-y-2 mb-4">
+            <h4 className="font-medium">登録済み投手記録</h4>
+            {existingRecords.map(record => {
+              const player = players.find(p => p.id === record.player_id);
+              return (
+                <div key={record.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                  <div className="text-sm">
+                    <span className="font-medium">{player?.player_name}</span>
+                    <span className="ml-2 text-gray-600">
+                      {formatInningsPitched(record.innings_pitched)}回
+                      被安打{record.hits_allowed} 失点{record.runs_allowed}
+                      自責{record.earned_runs} 奪三振{record.strikeouts}
+                    </span>
+                  </div>
+                  {canEdit && (
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleEdit(record)}
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDelete(record.id!)}
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        削除
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {canEdit && (
+          <>
+            {}
+            <div>
+              <Label htmlFor="pitcher">投手</Label>
+              <Select value={selectedPitcher} onValueChange={setSelectedPitcher}>
+                <SelectTrigger>
+                  <SelectValue placeholder="投手を選択" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pitcherCandidates.map(player => (
+                    <SelectItem key={player.id} value={player.id}>
+                      {player.player_name} ({player.position})
+                    </SelectItem>
+                  ))}
+                  {pitcherCandidates.length === 0 && (
+                    <SelectItem value="none" disabled>
+                      投手がいません
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+  <Label htmlFor="innings">投球回</Label>
+  <Input
+    id="innings"
+    type="number"
+    step="0.1"
+    min="0"
+    value={pitchingData.innings_pitched}
+    onChange={(e) => handleInningsPitchedChange(e.target.value)}
+    placeholder="0.0"
+  />
+  <p className="text-xs text-gray-500 mt-1">
+    小数点以下: .1=1アウト、.2=2アウト（3アウトで次の回へ）
+  </p>
+</div>
+              <div>
+                <Label htmlFor="hits">被安打</Label>
+                <Input
+                  id="hits"
+                  type="number"
+                  min="0"
+                  value={pitchingData.hits_allowed}
+                  onChange={(e) => setPitchingData(prev => ({
+                    ...prev,
+                    hits_allowed: parseInt(e.target.value) || 0
+                  }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="runs">失点</Label>
+                <Input
+                  id="runs"
+                  type="number"
+                  min="0"
+                  value={pitchingData.runs_allowed}
+                  onChange={(e) => setPitchingData(prev => ({
+                    ...prev,
+                    runs_allowed: parseInt(e.target.value) || 0
+                  }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="earned_runs">自責点</Label>
+                <Input
+                  id="earned_runs"
+                  type="number"
+                  min="0"
+                  value={pitchingData.earned_runs}
+                  onChange={(e) => setPitchingData(prev => ({
+                    ...prev,
+                    earned_runs: parseInt(e.target.value) || 0
+                  }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="strikeouts">奪三振</Label>
+                <Input
+                  id="strikeouts"
+                  type="number"
+                  min="0"
+                  value={pitchingData.strikeouts}
+                  onChange={(e) => setPitchingData(prev => ({
+                    ...prev,
+                    strikeouts: parseInt(e.target.value) || 0
+                  }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="walks">与四球</Label>
+                <Input
+                  id="walks"
+                  type="number"
+                  min="0"
+                  value={pitchingData.walks}
+                  onChange={(e) => setPitchingData(prev => ({
+                    ...prev,
+                    walks: parseInt(e.target.value) || 0
+                  }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="home_runs">被本塁打</Label>
+                <Input
+                  id="home_runs"
+                  type="number"
+                  min="0"
+                  value={pitchingData.home_runs_allowed}
+                  onChange={(e) => setPitchingData(prev => ({
+                    ...prev,
+                    home_runs_allowed: parseInt(e.target.value) || 0
+                  }))}
+                />
+              </div>
+            </div>
+
+            {}
+            <Button
+              onClick={handleSave}
+              disabled={loading || !selectedPitcher}
+              className="w-full"
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {editingRecord ? '更新' : '保存'}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/PitchingStatsDisplay.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Trophy } from "lucide-react";
+
+interface PitchingStats {
+  player_id: string;
+  player_name: string;
+  game_id: string;
+  innings_pitched: number;
+  hits_allowed: number;
+  runs_allowed: number;
+  earned_runs: number;
+  strikeouts: number;
+  walks: number;
+  home_runs_allowed: number;
+  era: number;
+  whip: number;
+  k_per_nine: number;
+  bb_per_nine: number;
+}
+
+interface Props {
+  gameId: string;
+}
+
+export default function PitchingStatsDisplay({ gameId }: Props) {
+  const supabase = createClientComponentClient();
+  const [pitchingStats, setPitchingStats] = useState<PitchingStats[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchPitchingStats();
+  }, [gameId]);
+
+  const fetchPitchingStats = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("player_pitching_stats")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (error) throw error;
+      if (data) {
+        setPitchingStats(data);
+      }
+    } catch (error) {
+      console.error("投手成績取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatInningsPitched = (innings: number) => {
+
+  if (innings % 1 === 0) {
+    return `${innings}`;
+  }
+  return innings.toFixed(1);
+};
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="text-center text-gray-500">読み込み中...</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (pitchingStats.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="text-center text-gray-500">投手成績がまだ登録されていません</div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-5 w-5" />
+          投手成績
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b">
+              <tr>
+                <th className="text-left py-2 px-2 font-medium">選手名</th>
+                <th className="text-center py-2 px-2 font-medium">投球回</th>
+                <th className="text-center py-2 px-2 font-medium">被安打</th>
+                <th className="text-center py-2 px-2 font-medium">失点</th>
+                <th className="text-center py-2 px-2 font-medium">自責点</th>
+                <th className="text-center py-2 px-2 font-medium">奪三振</th>
+                <th className="text-center py-2 px-2 font-medium">与四球</th>
+                <th className="text-center py-2 px-2 font-medium">被本塁打</th>
+                <th className="text-center py-2 px-2 font-medium">防御率</th>
+                <th className="text-center py-2 px-2 font-medium">WHIP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pitchingStats.map((stats, index) => (
+  <tr key={`${stats.player_id}-${index}`} className="border-b hover:bg-gray-50">
+                  <td className="py-2 px-2 font-medium">{stats.player_name}</td>
+                  <td className="text-center py-2 px-2">
+                    {formatInningsPitched(stats.innings_pitched)}
+                  </td>
+                  <td className="text-center py-2 px-2">{stats.hits_allowed}</td>
+                  <td className="text-center py-2 px-2">{stats.runs_allowed}</td>
+                  <td className="text-center py-2 px-2">{stats.earned_runs}</td>
+                  <td className="text-center py-2 px-2">{stats.strikeouts}</td>
+                  <td className="text-center py-2 px-2">{stats.walks}</td>
+                  <td className="text-center py-2 px-2">{stats.home_runs_allowed}</td>
+                  <td className="text-center py-2 px-2 font-semibold">
+                    {stats.era.toFixed(2)}
+                  </td>
+                  <td className="text-center py-2 px-2">
+                    {stats.whip.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {}
+        <div className="mt-4 pt-4 border-t text-xs text-gray-600">
+          <div className="space-y-1">
+            <div>
+              <span className="font-medium">防御率 (ERA)</span>:
+              9イニングあたりの自責点 (低いほど良い)
+            </div>
+            <div>
+              <span className="font-medium">WHIP</span>:
+              1イニングあたりの与四球＋被安打 (低いほど良い)
+            </div>
+          </div>
+        </div>
+
+        {}
+        {pitchingStats.length > 1 && (
+          <div className="mt-4 pt-4 border-t">
+            <h4 className="font-medium mb-2">チーム合計</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+              <div>
+  <span className="text-gray-600">投球回: </span>
+  <span className="font-medium">
+    {formatInningsPitched(
+      (() => {
+
+        let totalOuts = 0;
+        pitchingStats.forEach(s => {
+          const wholeInnings = Math.floor(s.innings_pitched);
+          const outs = Math.round((s.innings_pitched - wholeInnings) * 10);
+          totalOuts += (wholeInnings * 3) + outs;
+        });
+
+        const innings = Math.floor(totalOuts / 3);
+        const remainingOuts = totalOuts % 3;
+        return innings + (remainingOuts / 10);
+      })()
+    )}
+  </span>
+</div>
+              <div>
+                <span className="text-gray-600">奪三振: </span>
+                <span className="font-medium">
+                  {pitchingStats.reduce((sum, s) => sum + s.strikeouts, 0)}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-600">与四球: </span>
+                <span className="font-medium">
+                  {pitchingStats.reduce((sum, s) => sum + s.walks, 0)}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-600">失点: </span>
+                <span className="font-medium">
+                  {pitchingStats.reduce((sum, s) => sum + s.runs_allowed, 0)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/PlayerSubstitution.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface GamePlayer {
+  id: string;
+  game_id: string;
+  player_name: string;
+  team_member_id: string | null;
+  is_starter: boolean;
+  batting_order: number | null;
+  position: string | null;
+  is_active: boolean;
+}
+
+interface Substitution {
+  id?: string;
+  game_id: string;
+  inning: number;
+  out_player_id: string;
+  in_player_id: string;
+  substitution_type: string;
+  batting_order: number | null;
+  new_position: string | null;
+  description: string;
+}
+
+interface Props {
+  gameId: string;
+  currentInning: number;
+  canEdit: boolean;
+  onSubstitutionComplete?: () => void;
+}
+
+const POSITIONS = [
+  { value: "投手", label: "投手" },
+  { value: "捕手", label: "捕手" },
+  { value: "一塁手", label: "一塁手" },
+  { value: "二塁手", label: "二塁手" },
+  { value: "三塁手", label: "三塁手" },
+  { value: "遊撃手", label: "遊撃手" },
+  { value: "左翼手", label: "左翼手" },
+  { value: "中堅手", label: "中堅手" },
+  { value: "右翼手", label: "右翼手" },
+  { value: "指名打者", label: "DH" }
+];
+
+export default function PlayerSubstitution({
+  gameId,
+  currentInning,
+  canEdit,
+  onSubstitutionComplete
+}: Props) {
+  const supabase = createClientComponentClient();
+
+  const [activePlayers, setActivePlayers] = useState<GamePlayer[]>([]);
+  const [benchPlayers, setBenchPlayers] = useState<GamePlayer[]>([]);
+  const [substitutions, setSubstitutions] = useState<Substitution[]>([]);
+  const [selectedOutPlayer, setSelectedOutPlayer] = useState<string>("");
+  const [selectedInPlayer, setSelectedInPlayer] = useState<string>("");
+  const [newPosition, setNewPosition] = useState<string>("");
+  const [substitutionType, setSubstitutionType] = useState<string>("player_change");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    fetchPlayers();
+    fetchSubstitutions();
+  }, [gameId]);
+
+  const fetchPlayers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_players")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (error) {
+        console.error("選手取得エラー:", error);
+        return;
+      }
+
+      if (data) {
+
+        const active = data.filter(p => p.is_active);
+        const bench = data.filter(p => !p.is_active && !p.is_starter);
+
+        setActivePlayers(active.sort((a, b) => (a.batting_order || 99) - (b.batting_order || 99)));
+        setBenchPlayers(bench);
+      }
+    } catch (error) {
+      console.error("エラー:", error);
+    }
+  };
+
+  const fetchSubstitutions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_substitutions")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("created_at", { ascending: false });
+
+      if (data) {
+        setSubstitutions(data);
+      }
+    } catch (error) {
+      console.error("交代履歴取得エラー:", error);
+    }
+  };
+
+  const handleSubstitution = async () => {
+    if (!selectedOutPlayer || !selectedInPlayer || !canEdit) return;
+
+    setSaving(true);
+    setMessage("");
+
+    try {
+      const outPlayer = activePlayers.find(p => p.id === selectedOutPlayer);
+      const inPlayer = benchPlayers.find(p => p.id === selectedInPlayer);
+
+      if (!outPlayer || !inPlayer) {
+        setMessage("選手が見つかりません");
+        return;
+      }
+
+      const substitutionRecord: Omit<Substitution, 'id'> = {
+        game_id: gameId,
+        inning: currentInning,
+        out_player_id: outPlayer.id,
+        in_player_id: inPlayer.id,
+        substitution_type: substitutionType,
+        batting_order: outPlayer.batting_order,
+        new_position: newPosition || outPlayer.position,
+        description: `${outPlayer.player_name} → ${inPlayer.player_name}`
+      };
+
+      const { error: subError } = await supabase
+        .from("game_substitutions")
+        .insert(substitutionRecord);
+
+      if (subError) {
+        console.error("交代記録エラー:", subError);
+        setMessage("交代記録の保存に失敗しました");
+        return;
+      }
+
+      const { error: outError } = await supabase
+        .from("game_players")
+        .update({
+          is_active: false,
+          position: null,
+          batting_order: null
+        })
+        .eq("id", outPlayer.id);
+
+      if (outError) {
+        console.error("選手更新エラー:", outError);
+        setMessage("選手情報の更新に失敗しました");
+        return;
+      }
+
+      const { error: inError } = await supabase
+        .from("game_players")
+        .update({
+          is_active: true,
+          position: newPosition || outPlayer.position,
+          batting_order: outPlayer.batting_order
+        })
+        .eq("id", inPlayer.id);
+
+      if (inError) {
+        console.error("選手更新エラー:", inError);
+        setMessage("選手情報の更新に失敗しました");
+        return;
+      }
+
+      setMessage("選手交代を完了しました");
+      resetForm();
+      await fetchPlayers();
+      await fetchSubstitutions();
+
+      if (onSubstitutionComplete) {
+        onSubstitutionComplete();
+      }
+
+      setTimeout(() => setMessage(""), 3000);
+    } catch (error) {
+      console.error("エラー:", error);
+      setMessage("予期しないエラーが発生しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePositionChange = async (playerId: string, newPos: string) => {
+    if (!canEdit) return;
+
+    try {
+      const { error } = await supabase
+        .from("game_players")
+        .update({ position: newPos })
+        .eq("id", playerId);
+
+      if (error) {
+        console.error("守備位置変更エラー:", error);
+        return;
+      }
+
+      await fetchPlayers();
+      setMessage("守備位置を変更しました");
+      setTimeout(() => setMessage(""), 3000);
+    } catch (error) {
+      console.error("エラー:", error);
+    }
+  };
+
+  const resetForm = () => {
+    setSelectedOutPlayer("");
+    setSelectedInPlayer("");
+    setNewPosition("");
+    setSubstitutionType("player_change");
+  };
+
+  if (!canEdit) {
+    return (
+      <div className="p-4 bg-gray-50 rounded-lg">
+        <p className="text-gray-600">編集権限がありません</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {}
+      <div>
+        <h3 className="font-semibold text-lg mb-3">現在の出場選手</h3>
+        <div className="bg-gray-50 rounded-lg p-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {activePlayers.map((player) => (
+              <div key={player.id} className="bg-white rounded-lg p-3 border">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <span className="font-medium">
+                      {player.batting_order ? `${player.batting_order}番` : ""}
+                    </span>
+                    <span className="ml-2">{player.player_name}</span>
+                  </div>
+                  <select
+                    value={player.position || ""}
+                    onChange={(e) => handlePositionChange(player.id, e.target.value)}
+                    className="ml-2 px-2 py-1 border rounded text-sm"
+                  >
+                    <option value="">守備位置</option>
+                    {POSITIONS.map((pos) => (
+                      <option key={pos.value} value={pos.value}>
+                        {pos.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {}
+      {benchPlayers.length > 0 && (
+        <div>
+          <h3 className="font-semibold text-lg mb-3">控え選手</h3>
+          <div className="bg-gray-50 rounded-lg p-4">
+            <div className="flex flex-wrap gap-2">
+              {benchPlayers.map((player) => (
+                <div key={player.id} className="bg-white rounded px-3 py-2 border">
+                  {player.player_name}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {}
+      <div className="border-t pt-6">
+        <h3 className="font-semibold text-lg mb-3">選手交代</h3>
+        <div className="space-y-4">
+          {}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              交代タイプ
+            </label>
+            <select
+              value={substitutionType}
+              onChange={(e) => setSubstitutionType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="player_change">選手交代</option>
+              <option value="pinch_hitter">代打</option>
+              <option value="pinch_runner">代走</option>
+              <option value="defensive_change">守備固め</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            {}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                交代する選手（OUT）
+              </label>
+              <select
+                value={selectedOutPlayer}
+                onChange={(e) => {
+                  setSelectedOutPlayer(e.target.value);
+
+                  const player = activePlayers.find(p => p.id === e.target.value);
+                  if (player?.position) {
+                    setNewPosition(player.position);
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">選択してください</option>
+                {activePlayers.map((player) => (
+                  <option key={player.id} value={player.id}>
+                    {player.batting_order ? `${player.batting_order}番 ` : ""}
+                    {player.player_name}
+                    {player.position ? ` (${player.position})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                交代で入る選手（IN）
+              </label>
+              <select
+                value={selectedInPlayer}
+                onChange={(e) => setSelectedInPlayer(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                disabled={benchPlayers.length === 0}
+              >
+                <option value="">選択してください</option>
+                {benchPlayers.map((player) => (
+                  <option key={player.id} value={player.id}>
+                    {player.player_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              新しい守備位置
+            </label>
+            <select
+              value={newPosition}
+              onChange={(e) => setNewPosition(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">変更なし</option>
+              {POSITIONS.map((pos) => (
+                <option key={pos.value} value={pos.value}>
+                  {pos.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {}
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleSubstitution}
+              disabled={!selectedOutPlayer || !selectedInPlayer || saving}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "交代中..." : "選手交代を実行"}
+            </button>
+            {message && (
+              <span className={`text-sm ${message.includes("失敗") ? "text-red-600" : "text-green-600"}`}>
+                {message}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {}
+      <div className="border-t pt-6">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="font-semibold text-lg">交代履歴</h3>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="text-blue-600 hover:text-blue-700 text-sm"
+          >
+            {showHistory ? "隠す" : "表示"}
+          </button>
+        </div>
+
+        {showHistory && substitutions.length > 0 && (
+          <div className="space-y-2">
+            {substitutions.map((sub) => {
+              const outPlayer = activePlayers.concat(benchPlayers).find(p => p.id === sub.out_player_id);
+              const inPlayer = activePlayers.concat(benchPlayers).find(p => p.id === sub.in_player_id);
+
+              return (
+                <div key={sub.id} className="bg-gray-50 rounded-lg p-3 text-sm">
+                  <div className="flex justify-between">
+                    <span>
+                      {sub.inning}回: {sub.description}
+                    </span>
+                    <span className="text-gray-500">
+                      {sub.substitution_type === "pinch_hitter" && "代打"}
+                      {sub.substitution_type === "pinch_runner" && "代走"}
+                      {sub.substitution_type === "defensive_change" && "守備固め"}
+                      {sub.substitution_type === "player_change" && "選手交代"}
+                    </span>
+                  </div>
+                  {sub.new_position && (
+                    <div className="text-gray-600 mt-1">
+                      守備位置: {sub.new_position}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {showHistory && substitutions.length === 0 && (
+          <p className="text-gray-500 text-sm">まだ交代はありません</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/RunnerDisplay.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface Runner {
+  id: string;
+  game_id: string;
+  inning: number;
+  player_id: string;
+  player_name: string;
+  current_base: number;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface Props {
+  gameId: string;
+  currentInning: number;
+  onRunnerUpdate?: () => void;
+  refreshTrigger?: number;
+}
+
+export default function RunnerDisplay({
+  gameId,
+  currentInning,
+  onRunnerUpdate,
+  refreshTrigger,
+}: Props) {
+  const supabase = createClientComponentClient();
+  const [runners, setRunners] = useState<Runner[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchRunners();
+  }, [gameId, currentInning, refreshTrigger]);
+
+  const fetchRunners = async () => {
+    try {
+
+      const { data, error } = await supabase
+        .from("game_runners")
+        .select("*")
+        .eq("game_id", gameId)
+        .eq("inning", currentInning)
+        .eq("is_active", true)
+        .in("current_base", [1, 2, 3]);
+
+      if (error) throw error;
+
+      const uniqueRunners = new Map<string, Runner>();
+      if (data) {
+        for (const runner of data) {
+          const existing = uniqueRunners.get(runner.player_id);
+          if (
+            !existing ||
+            new Date(runner.updated_at || runner.created_at) >
+              new Date(existing.updated_at || existing.created_at)
+          ) {
+            uniqueRunners.set(runner.player_id, runner);
+          }
+        }
+
+        const uniqueIds = Array.from(uniqueRunners.values()).map((r) => r.id);
+        const duplicateIds = data
+          .filter((r) => !uniqueIds.includes(r.id))
+          .map((r) => r.id);
+
+        if (duplicateIds.length > 0) {
+          await supabase.from("game_runners").delete().in("id", duplicateIds);
+        }
+      }
+
+      setRunners(Array.from(uniqueRunners.values()));
+    } catch (error) {
+      console.error("ランナー取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStealBase = async (
+    runnerId: string,
+    fromBase: number,
+    toBase: number
+  ) => {
+    try {
+
+      const { error: updateError } = await supabase
+        .from("game_runners")
+        .update({
+          current_base: toBase,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", runnerId);
+
+      if (updateError) throw updateError;
+
+      const runner = runners.find((r) => r.id === runnerId);
+      if (runner) {
+        const { data: battingRecord } = await supabase
+          .from("game_batting_records")
+          .select("*")
+          .eq("game_id", gameId)
+          .eq("player_id", runner.player_id)
+          .eq("inning", currentInning)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (battingRecord) {
+          const currentStolenBases = battingRecord.stolen_bases_detail || [];
+          currentStolenBases.push(toBase);
+
+          await supabase
+            .from("game_batting_records")
+            .update({
+              stolen_base: true,
+              stolen_bases_detail: currentStolenBases,
+            })
+            .eq("id", battingRecord.id);
+        }
+      }
+
+      await fetchRunners();
+      if (onRunnerUpdate) onRunnerUpdate();
+    } catch (error) {
+      console.error("盗塁記録エラー:", error);
+    }
+  };
+
+  const handleAdvanceBase = async (
+    runnerId: string,
+    fromBase: number,
+    toBase: number
+  ) => {
+    try {
+
+      const targetRunner = getRunnerAtBase(toBase);
+      if (targetRunner && toBase < 4) {
+        alert(`${toBase === 2 ? "二" : "三"}塁には既にランナーがいます`);
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from("game_runners")
+        .update({
+          current_base: toBase,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", runnerId);
+
+      if (updateError) throw updateError;
+
+      await fetchRunners();
+      if (onRunnerUpdate) onRunnerUpdate();
+    } catch (error) {
+      console.error("進塁記録エラー:", error);
+    }
+  };
+
+  const handleScoreRun = async (runnerId: string) => {
+    try {
+
+      const { error: updateError } = await supabase
+        .from("game_runners")
+        .update({
+          current_base: 4,
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", runnerId);
+
+      if (updateError) throw updateError;
+
+      const runner = runners.find((r) => r.id === runnerId);
+      if (runner) {
+        const { error: recordError } = await supabase
+          .from("game_batting_records")
+          .update({ run_scored: true })
+          .eq("game_id", gameId)
+          .eq("player_id", runner.player_id)
+          .eq("inning", currentInning);
+
+        if (recordError) throw recordError;
+      }
+
+      await fetchRunners();
+      if (onRunnerUpdate) onRunnerUpdate();
+    } catch (error) {
+      console.error("得点記録エラー:", error);
+    }
+  };
+
+  const getRunnerAtBase = (base: number) => {
+    return runners.find((r) => r.current_base === base);
+  };
+
+  if (loading) {
+    return <div className="text-center py-4">読み込み中...</div>;
+  }
+
+  return (
+    <div className="bg-white p-6 rounded-lg shadow-sm">
+      <h3 className="text-lg font-semibold mb-4">塁上のランナー</h3>
+
+      {}
+      <div className="relative w-80 h-80 mx-auto">
+        {}
+        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 320 320">
+          <path
+            d="M 160 240 L 80 160 L 160 80 L 240 160 Z"
+            stroke="#d1d5db"
+            strokeWidth="2"
+            fill="none"
+          />
+        </svg>
+
+        {}
+        <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2">
+          <div className="w-12 h-12 bg-gray-200 border-2 border-gray-400 transform rotate-45 flex items-center justify-center">
+            <span className="transform -rotate-45 text-xs font-bold">本</span>
+          </div>
+        </div>
+
+        {}
+        <div className="absolute right-0 top-1/2 transform translate-x-0 -translate-y-1/2">
+          <div className="w-12 h-12 bg-white border-2 border-gray-400 transform rotate-45 flex items-center justify-center">
+            <span className="transform -rotate-45 text-xs font-bold">一</span>
+          </div>
+          {getRunnerAtBase(1) && (
+            <div className="absolute -top-16 left-1/2 transform -translate-x-1/2">
+              <div className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm whitespace-nowrap mb-2">
+                {getRunnerAtBase(1)?.player_name}
+              </div>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() =>
+                    handleAdvanceBase(getRunnerAtBase(1)!.id, 1, 2)
+                  }
+                  className="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
+                  title="ヒットや野選などによる進塁"
+                >
+                  進塁→二塁
+                </button>
+                <button
+                  onClick={() => handleStealBase(getRunnerAtBase(1)!.id, 1, 2)}
+                  className="text-xs bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
+                  title="盗塁による進塁"
+                >
+                  盗塁→二塁
+                </button>
+                <button
+                  onClick={() => handleScoreRun(getRunnerAtBase(1)!.id)}
+                  className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                  title="ホームイン"
+                >
+                  得点
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {}
+        <div className="absolute top-0 left-1/2 transform -translate-x-1/2">
+          <div className="w-12 h-12 bg-white border-2 border-gray-400 transform rotate-45 flex items-center justify-center">
+            <span className="transform -rotate-45 text-xs font-bold">二</span>
+          </div>
+          {getRunnerAtBase(2) && (
+            <div className="absolute -top-20 left-1/2 transform -translate-x-1/2">
+              <div className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm whitespace-nowrap mb-2">
+                {getRunnerAtBase(2)?.player_name}
+              </div>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() =>
+                    handleAdvanceBase(getRunnerAtBase(2)!.id, 2, 3)
+                  }
+                  className="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
+                  title="ヒットや野選などによる進塁"
+                >
+                  進塁→三塁
+                </button>
+                <button
+                  onClick={() => handleStealBase(getRunnerAtBase(2)!.id, 2, 3)}
+                  className="text-xs bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
+                  title="盗塁による進塁"
+                >
+                  盗塁→三塁
+                </button>
+                <button
+                  onClick={() => handleScoreRun(getRunnerAtBase(2)!.id)}
+                  className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                  title="ホームイン"
+                >
+                  得点
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {}
+        <div className="absolute left-0 top-1/2 transform -translate-y-1/2">
+          <div className="w-12 h-12 bg-white border-2 border-gray-400 transform rotate-45 flex items-center justify-center">
+            <span className="transform -rotate-45 text-xs font-bold">三</span>
+          </div>
+          {getRunnerAtBase(3) && (
+            <div className="absolute -top-16 right-12">
+              <div className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm whitespace-nowrap mb-2">
+                {getRunnerAtBase(3)?.player_name}
+              </div>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => handleScoreRun(getRunnerAtBase(3)!.id)}
+                  className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                  title="ホームイン"
+                >
+                  得点
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {}
+      <div className="mt-6">
+        <h4 className="text-sm font-medium text-gray-700 mb-2">現在の塁上</h4>
+        {runners.length === 0 ? (
+          <p className="text-gray-500 text-sm">ランナーなし</p>
+        ) : (
+          <ul className="space-y-1">
+            {runners
+              .sort((a, b) => a.current_base - b.current_base)
+              .map((runner) => (
+                <li key={runner.id} className="text-sm">
+                  <span className="font-medium">{runner.player_name}</span>
+                  <span className="text-gray-600 ml-2">
+                    {runner.current_base === 1 && "一塁"}
+                    {runner.current_base === 2 && "二塁"}
+                    {runner.current_base === 3 && "三塁"}
+                  </span>
+                </li>
+              ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/ScoreBoxDisplay.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface GamePlayer {
+  id: string;
+  player_name: string;
+  batting_order: number | null;
+  position: string | null;
+  team_member_id: string | null;
+}
+
+interface BattingRecord {
+  id: string;
+  game_id: string;
+  player_id: string;
+  inning: number;
+  result: string;
+  rbi: number;
+  run_scored: boolean;
+  stolen_base: boolean;
+  base_reached?: number;
+  notes?: string;
+}
+
+interface PitchingRecord {
+  id: string;
+  game_id: string;
+  player_id: string;
+  innings_pitched: number;
+  hits_allowed: number;
+  runs_allowed: number;
+  earned_runs: number;
+  strikeouts: number;
+  walks: number;
+  home_runs_allowed: number;
+  hit_batters?: number;
+  wild_pitches?: number;
+  win?: boolean;
+  loss?: boolean;
+  save?: boolean;
+}
+
+interface PlayerBattingBoxScore {
+  player: GamePlayer;
+  battingRecords: BattingRecord[];
+  totalRbi: number;
+  totalRuns: number;
+  totalStolenBases: number;
+  totalErrors: number;
+}
+
+interface Props {
+  gameId: string;
+  isEditable: boolean;
+  gameStatus: string;
+}
+
+const POSITION_MAP: Record<string, string> = {
+  pitcher: "投",
+  catcher: "捕",
+  first: "一",
+  second: "二",
+  third: "三",
+  shortstop: "遊",
+  left: "左",
+  center: "中",
+  right: "右",
+  dh: "DH",
+};
+
+const getResultStyle = (result: string, notes?: string): string => {
+  if (
+    result === "安打" ||
+    result === "二塁打" ||
+    result === "三塁打" ||
+    result === "本塁打"
+  ) {
+    return "bg-blue-600 text-white";
+  }
+  if (result === "四球" || result === "死球") {
+    return "bg-yellow-100";
+  }
+  if (notes?.includes("失策")) {
+    return "bg-orange-100";
+  }
+  return "";
+};
+
+const getShortResult = (
+  result: string,
+  rbi: number,
+  notes?: string
+): string => {
+  const rbiText = rbi > 0 ? `(${rbi})` : "";
+
+  const resultMap: Record<string, string> = {
+    安打: "安",
+    二塁打: "二",
+    三塁打: "三",
+    本塁打: "本",
+    四球: "四球",
+    死球: "死球",
+    三振: "三振",
+    ゴロ: "ゴ",
+    フライ: "飛",
+    ライナー: "直",
+    犠打: "犠",
+    犠飛: "犠飛",
+    フィールダースチョイス: "野選",
+  };
+
+  let shortResult = resultMap[result] || result;
+
+  if (notes) {
+    if (notes.includes("投")) shortResult = "投" + shortResult;
+    if (notes.includes("捕")) shortResult = "捕" + shortResult;
+    if (notes.includes("一")) shortResult = "一" + shortResult;
+    if (notes.includes("二")) shortResult = "二" + shortResult;
+    if (notes.includes("三")) shortResult = "三" + shortResult;
+    if (notes.includes("遊")) shortResult = "遊" + shortResult;
+    if (notes.includes("左")) shortResult = "左" + shortResult;
+    if (notes.includes("中")) shortResult = "中" + shortResult;
+    if (notes.includes("右")) shortResult = "右" + shortResult;
+    if (notes.includes("失策")) shortResult += "失";
+  }
+
+  return shortResult + rbiText;
+};
+
+const formatInningsPitched = (innings: number): string => {
+  const wholeInnings = Math.floor(innings);
+  const outs = Math.round((innings - wholeInnings) * 10);
+
+  if (outs === 0) {
+    return `${wholeInnings}回`;
+  } else {
+    return `${wholeInnings}回${outs}/3`;
+  }
+};
+
+export default function ScoreBoxDisplay({
+  gameId,
+  isEditable,
+  gameStatus,
+}: Props) {
+  const supabase = createClientComponentClient();
+  const [players, setPlayers] = useState<GamePlayer[]>([]);
+  const [battingRecords, setBattingRecords] = useState<BattingRecord[]>([]);
+  const [pitchingRecords, setPitchingRecords] = useState<PitchingRecord[]>([]);
+  const [boxScores, setBoxScores] = useState<PlayerBattingBoxScore[]>([]);
+  const [maxInnings, setMaxInnings] = useState(7);
+  const [editingCell, setEditingCell] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchData();
+  }, [gameId]);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+
+      const { data: playersData } = await supabase
+        .from("game_players")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("batting_order", { ascending: true });
+
+      if (playersData) {
+        setPlayers(playersData);
+      }
+
+      const { data: battingData } = await supabase
+        .from("game_batting_records")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("inning", { ascending: true });
+
+      if (battingData) {
+        setBattingRecords(battingData);
+        const maxInning = Math.max(...battingData.map((r) => r.inning), 7);
+        setMaxInnings(maxInning);
+      }
+
+      const { data: pitchingData } = await supabase
+        .from("game_pitching_records")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (pitchingData) {
+        setPitchingRecords(pitchingData);
+      }
+
+      if (playersData && battingData) {
+        generateBoxScores(playersData, battingData);
+      }
+    } catch (error) {
+      console.error("データ取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateBoxScores = (
+    playersData: GamePlayer[],
+    battingData: BattingRecord[]
+  ) => {
+    const scores: PlayerBattingBoxScore[] = playersData
+      .filter((p) => p.batting_order !== null)
+      .sort((a, b) => (a.batting_order || 0) - (b.batting_order || 0))
+      .map((player) => {
+        const playerRecords = battingData.filter(
+          (r) => r.player_id === player.id
+        );
+
+        return {
+          player,
+          battingRecords: playerRecords,
+          totalRbi: playerRecords.reduce((sum, r) => sum + r.rbi, 0),
+          totalRuns: playerRecords.filter((r) => r.run_scored).length,
+          totalStolenBases: playerRecords.filter((r) => r.stolen_base).length,
+          totalErrors: 0,
+        };
+      });
+
+    setBoxScores(scores);
+  };
+
+  const handleCellEdit = async (
+    playerId: string,
+    inning: number,
+    field: string
+  ) => {
+    if (!isEditable || gameStatus === "finished") return;
+
+    const cellKey = `${playerId}-${inning}-${field}`;
+    setEditingCell(cellKey);
+
+    const record = battingRecords.find(
+      (r) => r.player_id === playerId && r.inning === inning
+    );
+
+    if (record) {
+      if (field === "result") setEditValue(record.result);
+      if (field === "rbi") setEditValue(record.rbi.toString());
+    } else {
+      setEditValue("");
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editingCell) return;
+
+    const [playerId, inning, field] = editingCell.split("-");
+    const inningNum = parseInt(inning);
+
+    try {
+      const existingRecord = battingRecords.find(
+        (r) => r.player_id === playerId && r.inning === inningNum
+      );
+
+      if (existingRecord) {
+
+        const updateData: any = {};
+        if (field === "result") updateData.result = editValue;
+        if (field === "rbi") updateData.rbi = parseInt(editValue) || 0;
+
+        await supabase
+          .from("game_batting_records")
+          .update(updateData)
+          .eq("id", existingRecord.id);
+      } else if (editValue) {
+
+        const newRecord: any = {
+          game_id: gameId,
+          player_id: playerId,
+          inning: inningNum,
+          result: field === "result" ? editValue : "",
+          rbi: field === "rbi" ? parseInt(editValue) || 0 : 0,
+          run_scored: false,
+          stolen_base: false,
+        };
+
+        await supabase.from("game_batting_records").insert(newRecord);
+      }
+
+      await fetchData();
+    } catch (error) {
+      console.error("保存エラー:", error);
+    } finally {
+      setEditingCell(null);
+      setEditValue("");
+    }
+  };
+
+  const handlePitcherEdit = async (
+    pitcherId: string,
+    field: string,
+    value: any
+  ) => {
+    if (!isEditable || gameStatus === "finished") return;
+
+    try {
+      const record = pitchingRecords.find((r) => r.player_id === pitcherId);
+
+      if (record) {
+        const updateData: any = {};
+        updateData[field] = value;
+
+        await supabase
+          .from("game_pitching_records")
+          .update(updateData)
+          .eq("id", record.id);
+
+        await fetchData();
+      }
+    } catch (error) {
+      console.error("投手成績更新エラー:", error);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-4">読み込み中...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="bg-gray-100 px-4 py-2 border-b">
+          <h3 className="font-bold text-lg">打撃成績</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead>
+              <tr className="bg-gray-50 border-b">
+                <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                  打順
+                </th>
+                <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                  守備
+                </th>
+                <th className="px-3 py-2 text-xs font-medium text-gray-700 text-left">
+                  選手名
+                </th>
+                {[...Array(maxInnings)].map((_, i) => (
+                  <th
+                    key={i}
+                    className="px-2 py-2 text-xs font-medium text-gray-700 text-center min-w-[3rem]"
+                  >
+                    {i + 1}
+                  </th>
+                ))}
+                <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                  打点
+                </th>
+                <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                  盗塁
+                </th>
+                <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                  得点
+                </th>
+                <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                  失策
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {boxScores.map((boxScore, idx) => (
+                <tr
+                  key={boxScore.player.id}
+                  className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                >
+                  <td className="px-2 py-2 text-center font-medium text-sm">
+                    {boxScore.player.batting_order}
+                  </td>
+                  <td className="px-2 py-2 text-center text-sm">
+                    {POSITION_MAP[boxScore.player.position || ""] || ""}
+                  </td>
+                  <td className="px-3 py-2 text-sm font-medium">
+                    {boxScore.player.player_name}
+                  </td>
+                  {[...Array(maxInnings)].map((_, inning) => {
+                    const record = boxScore.battingRecords.find(
+                      (r) => r.inning === inning + 1
+                    );
+                    const cellKey = `${boxScore.player.id}-${
+                      inning + 1
+                    }-result`;
+                    const isEditing = editingCell === cellKey;
+
+                    return (
+                      <td
+                        key={inning}
+                        className={`px-1 py-1 text-center text-xs border-l cursor-pointer hover:bg-gray-100 ${
+                          record
+                            ? getResultStyle(record.result, record.notes)
+                            : ""
+                        }`}
+                        onClick={() =>
+                          handleCellEdit(
+                            boxScore.player.id,
+                            inning + 1,
+                            "result"
+                          )
+                        }
+                      >
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={saveEdit}
+                            onKeyPress={(e) => e.key === "Enter" && saveEdit()}
+                            className="w-full px-1 text-center"
+                            autoFocus
+                          />
+                        ) : (
+                          <span className="block px-1 py-1">
+                            {record
+                              ? getShortResult(
+                                  record.result,
+                                  record.rbi,
+                                  record.notes
+                                )
+                              : ""}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-2 text-center text-sm font-medium border-l">
+                    {boxScore.totalRbi}
+                  </td>
+                  <td className="px-2 py-2 text-center text-sm">
+                    {boxScore.totalStolenBases}
+                  </td>
+                  <td className="px-2 py-2 text-center text-sm">
+                    {boxScore.totalRuns}
+                  </td>
+                  <td className="px-2 py-2 text-center text-sm">
+                    {boxScore.totalErrors}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {}
+      {pitchingRecords.length > 0 && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="bg-gray-100 px-4 py-2 border-b">
+            <h3 className="font-bold text-lg">投手成績</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b">
+                  <th className="px-3 py-2 text-xs font-medium text-gray-700 text-left">
+                    投手名
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    イニング数
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    自責点
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    失点
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    三振
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    四球
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    死球
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    被安
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    被本
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    投球数
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    暴投
+                  </th>
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    勝敗
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {pitchingRecords.map((record, idx) => {
+                  const pitcher = players.find(
+                    (p) => p.id === record.player_id
+                  );
+
+                  return (
+                    <tr
+                      key={record.id}
+                      className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                    >
+                      <td className="px-3 py-2 text-sm font-medium">
+                        {pitcher?.player_name || "不明"}
+                      </td>
+                      <td className="px-2 py-2 text-center text-sm">
+                        {formatInningsPitched(record.innings_pitched)}
+                      </td>
+                      <td
+                        className="px-2 py-2 text-center text-sm cursor-pointer hover:bg-gray-100"
+                        onClick={() =>
+                          isEditable &&
+                          handlePitcherEdit(
+                            record.player_id,
+                            "earned_runs",
+                            record.earned_runs + 1
+                          )
+                        }
+                      >
+                        {record.earned_runs}
+                      </td>
+                      <td
+                        className="px-2 py-2 text-center text-sm cursor-pointer hover:bg-gray-100"
+                        onClick={() =>
+                          isEditable &&
+                          handlePitcherEdit(
+                            record.player_id,
+                            "runs_allowed",
+                            record.runs_allowed + 1
+                          )
+                        }
+                      >
+                        {record.runs_allowed}
+                      </td>
+                      <td
+                        className="px-2 py-2 text-center text-sm cursor-pointer hover:bg-gray-100"
+                        onClick={() =>
+                          isEditable &&
+                          handlePitcherEdit(
+                            record.player_id,
+                            "strikeouts",
+                            record.strikeouts + 1
+                          )
+                        }
+                      >
+                        {record.strikeouts}
+                      </td>
+                      <td
+                        className="px-2 py-2 text-center text-sm cursor-pointer hover:bg-gray-100"
+                        onClick={() =>
+                          isEditable &&
+                          handlePitcherEdit(
+                            record.player_id,
+                            "walks",
+                            record.walks + 1
+                          )
+                        }
+                      >
+                        {record.walks}
+                      </td>
+                      <td className="px-2 py-2 text-center text-sm">
+                        {record.hit_batters || 0}
+                      </td>
+                      <td className="px-2 py-2 text-center text-sm">
+                        {record.hits_allowed}
+                      </td>
+                      <td className="px-2 py-2 text-center text-sm">
+                        {record.home_runs_allowed}
+                      </td>
+                      <td className="px-2 py-2 text-center text-sm">-</td>
+                      <td className="px-2 py-2 text-center text-sm">
+                        {record.wild_pitches || 0}
+                      </td>
+                      <td className="px-2 py-2 text-center text-sm">
+                        {record.win
+                          ? "勝"
+                          : record.loss
+                          ? "負"
+                          : record.save
+                          ? "S"
+                          : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {}
+      {isEditable && gameStatus !== "finished" && (
+        <div className="bg-blue-50 border border-blue-200 rounded p-3">
+          <p className="text-sm text-blue-800">
+            💡
+            セルをクリックして編集できます。Enterキーまたはセル外をクリックで保存されます。
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/game/StatsDisplay.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface GamePlayer {
+  id: string;
+  player_name: string;
+  batting_order: number | null;
+  position: string | null;
+}
+
+interface Game {
+  id: string;
+  status: string;
+}
+
+interface BattingRecord {
+  id: string;
+  game_id: string;
+  player_id: string;
+  inning: number;
+  result: string;
+  rbi: number;
+  run_scored: boolean;
+  stolen_base: boolean;
+}
+
+interface PitchingRecord {
+  id: string;
+  game_id: string;
+  player_id: string;
+  innings_pitched: number;
+  hits_allowed: number;
+  runs_allowed: number;
+  earned_runs: number;
+  strikeouts: number;
+  walks: number;
+}
+
+interface PlayerStats {
+  player_id: string;
+  player_name: string;
+  at_bats: number;
+  hits: number;
+  doubles: number;
+  triples: number;
+  homeruns: number;
+  rbi: number;
+  runs: number;
+  walks: number;
+  strikeouts: number;
+  stolen_bases: number;
+  batting_average: string;
+  on_base_percentage: string;
+  slugging_percentage: string;
+}
+
+interface PlayerBattingStatsView {
+  player_id: string;
+  player_name: string;
+  game_id: string;
+  hits: number;
+  home_runs: number;
+  doubles: number;
+  triples: number;
+  at_bats: number;
+  walks: number;
+  rbi: number;
+  runs: number;
+  stolen_bases: number;
+  batting_average: number;
+  on_base_percentage: number;
+  slugging_percentage: number;
+}
+
+interface PlayerPitchingStatsView {
+  player_id: string;
+  player_name: string;
+  game_id: string;
+  innings_pitched: number;
+  hits_allowed: number;
+  runs_allowed: number;
+  earned_runs: number;
+  strikeouts: number;
+  walks: number;
+  home_runs_allowed: number;
+  era: number;
+  whip: number;
+  k_per_nine: number;
+  bb_per_nine: number;
+}
+
+interface InningScore {
+  inning: number;
+  top_score: number;
+  bottom_score: number;
+}
+
+interface Props {
+  gameId: string;
+  players: GamePlayer[];
+}
+
+const HIT_RESULTS = ["安打", "二塁打", "三塁打", "本塁打"];
+const OUT_RESULTS = [
+  "三振",
+  "ゴロ",
+  "フライ",
+  "ライナー",
+  "犠打",
+  "犠飛",
+  "フィールダースチョイス",
+];
+const WALK_RESULTS = ["四球", "死球"];
+const SACRIFICE_RESULTS = ["犠打", "犠飛"];
+
+export default function StatsDisplay({ gameId, players }: Props) {
+  const supabase = createClientComponentClient();
+
+  const [gameStatus, setGameStatus] = useState<string>("in_progress");
+  const [battingRecords, setBattingRecords] = useState<BattingRecord[]>([]);
+  const [pitchingRecords, setPitchingRecords] = useState<PitchingRecord[]>([]);
+  const [playerStats, setPlayerStats] = useState<PlayerStats[]>([]);
+  const [inningScores, setInningScores] = useState<InningScore[]>([]);
+  const [teamStats, setTeamStats] = useState({
+    totalRuns: 0,
+    totalHits: 0,
+    totalErrors: 0,
+    totalRBI: 0,
+    teamBattingAverage: "0.000",
+  });
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"batting" | "pitching" | "score">(
+    "batting"
+  );
+
+  useEffect(() => {
+    fetchGameStatus();
+  }, [gameId]);
+
+  const fetchGameStatus = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("games")
+        .select("status")
+        .eq("id", gameId)
+        .single();
+
+      if (data) {
+        setGameStatus(data.status);
+
+        if (data.status === "completed") {
+          fetchStatsFromView();
+        } else {
+          fetchAllStatsForRealtime();
+        }
+      }
+    } catch (error) {
+      console.error("試合ステータス取得エラー:", error);
+
+      fetchAllStatsForRealtime();
+    }
+  };
+
+  const fetchStatsFromView = async () => {
+    setLoading(true);
+
+    try {
+
+      const { data: battingData, error: battingError } = await supabase
+        .from("player_batting_stats")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (battingData) {
+
+        const convertedStats = battingData.map(
+          (stat: PlayerBattingStatsView) => ({
+            player_id: stat.player_id,
+            player_name: stat.player_name,
+            at_bats: stat.at_bats,
+            hits: stat.hits,
+            doubles: stat.doubles,
+            triples: stat.triples,
+            homeruns: stat.home_runs,
+            rbi: stat.rbi,
+            runs: stat.runs,
+            walks: stat.walks,
+            strikeouts: 0,
+            stolen_bases: stat.stolen_bases,
+            batting_average: stat.batting_average.toFixed(3),
+            on_base_percentage: stat.on_base_percentage.toFixed(3),
+            slugging_percentage: stat.slugging_percentage.toFixed(3),
+          })
+        );
+
+        const { data: strikeoutData } = await supabase
+          .from("game_batting_records")
+          .select("player_id")
+          .eq("game_id", gameId)
+          .eq("result", "三振");
+
+        if (strikeoutData) {
+          convertedStats.forEach((stat) => {
+            stat.strikeouts = strikeoutData.filter(
+              (r) => r.player_id === stat.player_id
+            ).length;
+          });
+        }
+
+        convertedStats.sort((a, b) => {
+          const orderA =
+            players.find((p) => p.id === a.player_id)?.batting_order || 99;
+          const orderB =
+            players.find((p) => p.id === b.player_id)?.batting_order || 99;
+          return orderA - orderB;
+        });
+
+        setPlayerStats(convertedStats);
+
+        const teamTotals = {
+          totalHits: convertedStats.reduce((sum, s) => sum + s.hits, 0),
+          totalRuns: convertedStats.reduce((sum, s) => sum + s.runs, 0),
+          totalRBI: convertedStats.reduce((sum, s) => sum + s.rbi, 0),
+          totalErrors: 0,
+          teamBattingAverage: (
+            convertedStats.reduce((sum, s) => sum + s.hits, 0) /
+            Math.max(
+              1,
+              convertedStats.reduce((sum, s) => sum + s.at_bats, 0)
+            )
+          ).toFixed(3),
+        };
+        setTeamStats(teamTotals);
+      }
+
+      const { data: pitchingData } = await supabase
+        .from("player_pitching_stats")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (pitchingData) {
+        setPitchingRecords(
+          pitchingData.map((p: PlayerPitchingStatsView) => ({
+            id: p.player_id,
+            game_id: p.game_id,
+            player_id: p.player_id,
+            innings_pitched: p.innings_pitched,
+            hits_allowed: p.hits_allowed,
+            runs_allowed: p.runs_allowed,
+            earned_runs: p.earned_runs,
+            strikeouts: p.strikeouts,
+            walks: p.walks,
+          }))
+        );
+      }
+
+      await fetchInningScores();
+    } catch (error) {
+      console.error("ビューからのデータ取得エラー:", error);
+
+      fetchAllStatsForRealtime();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAllStatsForRealtime = async () => {
+    setLoading(true);
+    await Promise.all([
+      fetchBattingRecords(),
+      fetchPitchingRecords(),
+      fetchInningScores(),
+    ]);
+    setLoading(false);
+  };
+
+  const fetchBattingRecords = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_batting_records")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("inning", { ascending: true });
+
+      if (data) {
+        setBattingRecords(data);
+        calculatePlayerStats(data);
+        calculateTeamStats(data);
+      }
+    } catch (error) {
+      console.error("打撃記録取得エラー:", error);
+    }
+  };
+
+  const fetchPitchingRecords = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_pitching_records")
+        .select("*")
+        .eq("game_id", gameId);
+
+      if (data) {
+        setPitchingRecords(data);
+      }
+    } catch (error) {
+      console.error("投手記録取得エラー:", error);
+    }
+  };
+
+  const fetchInningScores = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("inning", { ascending: true });
+
+      if (data) {
+        setInningScores(data);
+      }
+    } catch (error) {
+      console.error("スコア取得エラー:", error);
+    }
+  };
+
+  const calculatePlayerStats = (records: BattingRecord[]) => {
+    const statsMap = new Map<string, PlayerStats>();
+
+    records.forEach((record) => {
+      const player = players.find((p) => p.id === record.player_id);
+      if (!player) return;
+
+      if (!statsMap.has(record.player_id)) {
+        statsMap.set(record.player_id, {
+          player_id: record.player_id,
+          player_name: player.player_name,
+          at_bats: 0,
+          hits: 0,
+          doubles: 0,
+          triples: 0,
+          homeruns: 0,
+          rbi: 0,
+          runs: 0,
+          walks: 0,
+          strikeouts: 0,
+          stolen_bases: 0,
+          batting_average: "0.000",
+          on_base_percentage: "0.000",
+          slugging_percentage: "0.000",
+        });
+      }
+
+      const stats = statsMap.get(record.player_id)!;
+
+      if (
+        !WALK_RESULTS.includes(record.result) &&
+        !SACRIFICE_RESULTS.includes(record.result)
+      ) {
+        stats.at_bats++;
+      }
+
+      if (HIT_RESULTS.includes(record.result)) {
+        stats.hits++;
+
+        if (record.result === "二塁打") stats.doubles++;
+        if (record.result === "三塁打") stats.triples++;
+        if (record.result === "本塁打") stats.homeruns++;
+      }
+
+      if (record.result === "三振") stats.strikeouts++;
+      if (WALK_RESULTS.includes(record.result)) stats.walks++;
+      if (record.run_scored) stats.runs++;
+      if (record.stolen_base) stats.stolen_bases++;
+      stats.rbi += record.rbi;
+    });
+
+    const statsArray = Array.from(statsMap.values()).map((stats) => {
+
+      const avg = stats.at_bats > 0 ? stats.hits / stats.at_bats : 0;
+      stats.batting_average = avg.toFixed(3);
+
+      const plateAppearances = stats.at_bats + stats.walks;
+      const obp =
+        plateAppearances > 0
+          ? (stats.hits + stats.walks) / plateAppearances
+          : 0;
+      stats.on_base_percentage = obp.toFixed(3);
+
+      const totalBases =
+        stats.hits + stats.doubles + stats.triples * 2 + stats.homeruns * 3;
+      const slg = stats.at_bats > 0 ? totalBases / stats.at_bats : 0;
+      stats.slugging_percentage = slg.toFixed(3);
+
+      return stats;
+    });
+
+    statsArray.sort((a, b) => {
+      const orderA =
+        players.find((p) => p.id === a.player_id)?.batting_order || 99;
+      const orderB =
+        players.find((p) => p.id === b.player_id)?.batting_order || 99;
+      return orderA - orderB;
+    });
+
+    setPlayerStats(statsArray);
+  };
+
+  const calculateTeamStats = (records: BattingRecord[]) => {
+    let totalHits = 0;
+    let totalAtBats = 0;
+    let totalRuns = 0;
+    let totalRBI = 0;
+
+    records.forEach((record) => {
+      if (HIT_RESULTS.includes(record.result)) totalHits++;
+      if (
+        !WALK_RESULTS.includes(record.result) &&
+        !SACRIFICE_RESULTS.includes(record.result)
+      ) {
+        totalAtBats++;
+      }
+      if (record.run_scored) totalRuns++;
+      totalRBI += record.rbi;
+    });
+
+    const teamAvg =
+      totalAtBats > 0 ? (totalHits / totalAtBats).toFixed(3) : "0.000";
+
+    setTeamStats({
+      totalRuns,
+      totalHits,
+      totalErrors: 0,
+      totalRBI,
+      teamBattingAverage: teamAvg,
+    });
+  };
+
+  const formatInnings = (innings: number): string => {
+    const wholeInnings = Math.floor(innings);
+    const outs = Math.round((innings % 1) * 10);
+    return `${wholeInnings}.${outs}`;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {}
+      {process.env.NODE_ENV === "development" && (
+        <div className="text-xs text-gray-500 text-right">
+          データソース:{" "}
+          {gameStatus === "completed"
+            ? "データベースビュー"
+            : "リアルタイム計算"}
+        </div>
+      )}
+
+      {}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab("batting")}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === "batting"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            打撃成績
+          </button>
+          <button
+            onClick={() => setActiveTab("pitching")}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === "pitching"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            投手成績
+          </button>
+          <button
+            onClick={() => setActiveTab("score")}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === "score"
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+          >
+            スコアボード
+          </button>
+        </nav>
+      </div>
+
+      {}
+      {activeTab === "batting" && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b">
+            <h3 className="text-lg font-semibold">打撃成績</h3>
+            <div className="mt-2 text-sm text-gray-600">
+              チーム打率: {teamStats.teamBattingAverage} | 総得点:{" "}
+              {teamStats.totalRuns} | 総安打: {teamStats.totalHits} | 総打点:{" "}
+              {teamStats.totalRBI}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    選手名
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    打数
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    安打
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    打率
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    本塁打
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    打点
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    得点
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    三振
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    四球
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    盗塁
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    出塁率
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    長打率
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {playerStats.map((stat) => (
+                  <tr key={stat.player_id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {stat.player_name}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.at_bats}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.hits}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                      {stat.batting_average}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.homeruns}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.rbi}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.runs}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.strikeouts}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.walks}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.stolen_bases}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.on_base_percentage}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                      {stat.slugging_percentage}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {}
+      {activeTab === "pitching" && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b">
+            <h3 className="text-lg font-semibold">投手成績</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    投手名
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    投球回
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    被安打
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    失点
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    自責点
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    奪三振
+                  </th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    与四球
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {pitchingRecords.map((record) => {
+                  const pitcher = players.find(
+                    (p) => p.id === record.player_id
+                  );
+                  return (
+                    <tr key={record.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {pitcher?.player_name || "不明"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {formatInnings(record.innings_pitched)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {record.hits_allowed}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {record.runs_allowed}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {record.earned_runs}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {record.strikeouts}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900">
+                        {record.walks}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {}
+      {activeTab === "score" && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b">
+            <h3 className="text-lg font-semibold">スコアボード</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    イニング
+                  </th>
+                  {Array.from({ length: 7 }, (_, i) => (
+                    <th
+                      key={i + 1}
+                      className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      {i + 1}
+                    </th>
+                  ))}
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    計
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                <tr>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    先攻
+                  </td>
+                  {Array.from({ length: 7 }, (_, i) => {
+                    const score = inningScores.find((s) => s.inning === i + 1);
+                    return (
+                      <td
+                        key={i}
+                        className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900"
+                      >
+                        {score?.top_score ?? "-"}
+                      </td>
+                    );
+                  })}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {inningScores.reduce(
+                      (sum, s) => sum + (s.top_score || 0),
+                      0
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    後攻
+                  </td>
+                  {Array.from({ length: 7 }, (_, i) => {
+                    const score = inningScores.find((s) => s.inning === i + 1);
+                    return (
+                      <td
+                        key={i}
+                        className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-900"
+                      >
+                        {score?.bottom_score ?? "-"}
+                      </td>
+                    );
+                  })}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {inningScores.reduce(
+                      (sum, s) => sum + (s.bottom_score || 0),
+                      0
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+

@@ -1,0 +1,88 @@
+# Source Files Summary
+Generated at: 2025-08-25
+
+## File Distribution
+
+### 認証・プロフィール機能 (auth_and_profile.txt)
+- Description: Authentication, user profile management, and login functionality
+- File count: 7
+- Files:
+  - src/app/auth/callback/route.ts
+  - src/app/auth/logout/route.ts
+  - src/app/auth/setup/page.tsx
+  - src/app/login/page.tsx
+  - src/components/auth/AuthProvider.tsx
+  - src/components/auth/LoginPage.tsx
+  - src/components/auth/ProtectedRoute.tsx
+
+### 試合基本機能 (game_core.txt)
+- Description: Core game management features
+- File count: 2
+- Files:
+  - src/app/games/create/page.tsx
+  - src/app/games/page.tsx
+
+### 試合詳細機能 (game_advanced.txt)
+- Description: Advanced game features including progress, players, attendance
+- File count: 10
+- Files:
+  - src/components/game/BattingRecordInput.tsx
+  - src/components/game/DoublePlaySelector.tsx
+  - src/components/game/InlineScoreInput.tsx
+  - src/components/game/OperationTasksDisplay.tsx
+  - src/components/game/PitchingRecordInput.tsx
+  - src/components/game/PitchingStatsDisplay.tsx
+  - src/components/game/PlayerSubstitution.tsx
+  - src/components/game/RunnerDisplay.tsx
+  - src/components/game/ScoreBoxDisplay.tsx
+  - src/components/game/StatsDisplay.tsx
+
+### チーム管理機能 (team_management.txt)
+- Description: Team management and related features
+- File count: 5
+- Files:
+  - src/app/teams/[teamId]/edit/page.tsx
+  - src/app/teams/[teamId]/games/page.tsx
+  - src/app/teams/[teamId]/page.tsx
+  - src/app/teams/create/page.tsx
+  - src/app/teams/page.tsx
+
+### ダッシュボード・検索・統計機能 (dashboard_search_stats.txt)
+- Description: Dashboard, search, and statistics features
+- File count: 11
+- Files:
+  - src/app/dashboard/page.tsx
+  - src/app/dashboard/settings/page.tsx
+  - src/app/layout.tsx
+  - src/app/page.tsx
+  - src/app/search/games/page.tsx
+  - src/app/search/teams/page.tsx
+  - src/components/search/PublicGameSearch.tsx
+  - src/components/search/PublicTeamSearch.tsx
+  - src/components/stats/PersonalStats.tsx
+  - src/components/stats/TeamMemberStats.tsx
+  - src/components/stats/TeamOperationStats.tsx
+
+### UI・共有コンポーネント (ui_and_shared.txt)
+- Description: UI components and shared utilities
+- File count: 18
+- Files:
+  - src/app/games/[gameId]/edit/page.tsx
+  - src/app/games/[gameId]/operations/page.tsx
+  - src/app/games/[gameId]/page.tsx
+  - src/app/games/[gameId]/players/page.tsx
+  - src/app/games/[gameId]/progress/page.tsx
+  - src/app/games/[gameId]/score/page.tsx
+  - src/app/not-found.tsx
+  - src/components/Header.tsx
+  - src/components/Headline1.tsx
+  - src/components/SupabaseProvider.tsx
+  - src/components/ui/alert.tsx
+  - src/components/ui/button.tsx
+  - src/components/ui/card.tsx
+  - src/components/ui/input.tsx
+  - src/components/ui/label.tsx
+  - src/components/ui/select.tsx
+  - src/lib/japanData.ts
+  - src/lib/utils.ts
+

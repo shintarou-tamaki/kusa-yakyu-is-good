@@ -1,0 +1,3503 @@
+# ダッシュボード・検索・統計機能 Source Code
+Generated at: 2025-08-25
+File count: 11 files
+Purpose: Dashboard, search, and statistics features
+
+================================================================================
+FILE: src/app/dashboard/page.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useAuth } from "@/components/auth/AuthProvider";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import PersonalStats from "@/components/stats/PersonalStats";
+
+interface Team {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+interface Game {
+  id: string;
+  name: string;
+  game_date: string;
+  game_time: string | null;
+  location: string | null;
+  opponent_name: string;
+  status: string;
+  home_score: number;
+  opponent_score: number;
+  home_team_id: string | null;
+  created_at: string;
+}
+
+interface JoinRequest {
+  id: string;
+  team_id: string;
+  user_id: string;
+  status: string;
+  requested_at: string;
+  teams: {
+    id: string;
+    name: string;
+  };
+}
+
+interface UserProfile {
+  display_name: string | null;
+}
+
+interface Stats {
+  totalTeams: number;
+  totalGames: number;
+  upcomingGames: number;
+  completedGames: number;
+  pendingRequests: number;
+}
+
+interface PendingAttendance {
+  game_id: string;
+  game_name: string;
+  game_date: string;
+  game_time: string | null;
+  team_name: string;
+}
+
+export default function DashboardPage() {
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [games, setGames] = useState<Game[]>([]);
+  const [myRequests, setMyRequests] = useState<JoinRequest[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<JoinRequest[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [stats, setStats] = useState<Stats>({
+    totalTeams: 0,
+    totalGames: 0,
+    upcomingGames: 0,
+    completedGames: 0,
+    pendingRequests: 0,
+  });
+  const [pendingAttendances, setPendingAttendances] = useState<
+    PendingAttendance[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const router = useRouter();
+  const supabase = createClientComponentClient();
+
+  const [isDataLoading, setIsDataLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    if (isDataLoading) return;
+
+    const loadData = async () => {
+      setIsDataLoading(true);
+      await fetchUserProfile();
+      await fetchDashboardData();
+      setIsDataLoading(false);
+    };
+
+    loadData();
+  }, [user?.id]);
+
+  const fetchUserProfile = async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("display_name")
+        .eq("id", user.id)
+        .single();
+
+      if (data) {
+        setUserProfile(data);
+      } else if (!error) {
+
+        const { data: newProfile } = await supabase
+          .from("user_profiles")
+          .insert({
+            id: user.id,
+            display_name: "ユーザー",
+          })
+          .select()
+          .single();
+
+        if (newProfile) {
+          setUserProfile(newProfile);
+        }
+      }
+    } catch (error) {
+      console.error("プロフィール取得エラー:", error);
+    }
+  };
+
+  const fetchDashboardData = async () => {
+    if (!user) return;
+
+    try {
+
+      const { data: memberData } = await supabase
+        .from("team_members")
+        .select(
+          `
+          team_id,
+          teams (
+            id,
+            name,
+            description,
+            created_at
+          )
+        `
+        )
+        .eq("user_id", user.id);
+
+      if (memberData) {
+        const userTeams = memberData
+          .filter((item) => item.teams)
+          .map((item) => item.teams as Team);
+        setTeams(userTeams);
+      }
+
+      const { data: gamesData } = await supabase
+        .from("games")
+        .select("*")
+        .or(
+          `created_by.eq.${user.id},home_team_id.in.(${
+            memberData?.map((m) => m.team_id).join(",") || ""
+          })`
+        )
+        .order("game_date", { ascending: false })
+        .limit(10);
+
+      if (gamesData) {
+        setGames(gamesData);
+      }
+
+      const { data: requestsData } = await supabase
+        .from("team_join_requests")
+        .select(
+          `
+          *,
+          teams (
+            id,
+            name
+          )
+        `
+        )
+        .eq("user_id", user.id)
+        .eq("status", "pending");
+
+      if (requestsData) {
+        setMyRequests(requestsData);
+      }
+
+      const { data: ownedTeams } = await supabase
+        .from("teams")
+        .select("id")
+        .eq("owner_id", user.id);
+
+      if (ownedTeams && ownedTeams.length > 0) {
+        const teamIds = ownedTeams.map((t) => t.id);
+        const { data: approvalsData } = await supabase
+          .from("team_join_requests")
+          .select(
+            `
+            *,
+            teams (
+              id,
+              name
+            )
+          `
+          )
+          .in("team_id", teamIds)
+          .eq("status", "pending");
+
+        if (approvalsData) {
+          setPendingApprovals(approvalsData);
+        }
+      }
+
+      const totalTeams = memberData?.length || 0;
+      const totalGames = gamesData?.length || 0;
+      const upcomingGames =
+        gamesData?.filter((g) => g.status === "scheduled").length || 0;
+      const completedGames =
+        gamesData?.filter((g) => g.status === "completed").length || 0;
+      const pendingRequests = requestsData?.length || 0;
+
+      setStats({
+        totalTeams,
+        totalGames,
+        upcomingGames,
+        completedGames,
+        pendingRequests,
+      });
+
+      if (user) {
+        console.log("未回答出欠確認を取得開始");
+
+        const { data: myTeamMembers, error: tmError } = await supabase
+          .from("team_members")
+          .select("id, team_id")
+          .eq("user_id", user.id);
+
+        console.log("所属チーム:", myTeamMembers);
+if (myTeamMembers && myTeamMembers.length > 0) {
+  console.log("あなたのteam_member_id:", myTeamMembers[0].id);
+  console.log("あなたのteam_id:", myTeamMembers[0].team_id);
+}
+        console.log("チーム取得エラー:", tmError);
+
+        if (myTeamMembers && myTeamMembers.length > 0) {
+          const teamIds = myTeamMembers.map((tm) => tm.team_id);
+          const memberIds = myTeamMembers.map((tm) => tm.id);
+
+          const { data: activeGames, error: gamesError } = await supabase
+            .from("games")
+            .select(
+              `
+    id,
+    name,
+    game_date,
+    game_time,
+    status,
+    home_team_id,
+    attendance_check_enabled
+  `
+            )
+            .in("home_team_id", teamIds)
+            .eq("attendance_check_enabled", true)
+            .in("status", ["scheduled", "in_progress"])
+            .gte("game_date", new Date().toISOString().split("T")[0]);
+
+          console.log("出欠確認が有効な試合:", activeGames);
+          console.log("試合取得エラー:", gamesError);
+
+          if (activeGames && activeGames.length > 0) {
+            const gameIds = activeGames.map((g) => g.id);
+
+            const { data: myAttendances, error: attendanceError } =
+              await supabase
+                .from("game_attendances")
+                .select(
+                  `
+      id,
+      game_id,
+      status,
+      team_member_id
+    `
+                )
+                .in("game_id", gameIds)
+                .in("team_member_id", memberIds);
+
+            console.log("自分の出欠データ:", myAttendances);
+            console.log("出欠取得エラー:", attendanceError);
+
+            const pendingGames = activeGames.filter((game) => {
+              const myAttendance = myAttendances?.find(
+                (a) => a.game_id === game.id
+              );
+              return !myAttendance || myAttendance.status === "pending";
+            });
+
+            console.log("未回答の試合:", pendingGames);
+
+            if (pendingGames.length > 0) {
+
+              const uniqueTeamIds = [
+                ...new Set(
+                  pendingGames.map((g) => g.home_team_id).filter((id) => id)
+                ),
+              ];
+
+              const { data: teamsData } = await supabase
+                .from("teams")
+                .select("id, name")
+                .in("id", uniqueTeamIds);
+
+              console.log("チームデータ:", teamsData);
+
+              const formattedPending = pendingGames.map((game: any) => {
+                const team = teamsData?.find((t) => t.id === game.home_team_id);
+                return {
+                  game_id: game.id,
+                  game_name: game.name,
+                  game_date: game.game_date,
+                  game_time: game.game_time,
+                  team_name: team?.name || "チーム",
+                };
+              });
+
+              console.log("整形後の未回答データ:", formattedPending);
+              setPendingAttendances(formattedPending);
+            } else {
+              console.log("未回答の出欠確認はありません");
+            }
+          }
+        } else {
+          console.log("所属チームがありません");
+        }
+      }
+    } catch (error) {
+      console.error("データ取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRequestAction = async (
+    requestId: string,
+    action: "approved" | "rejected"
+  ) => {
+    try {
+      const { error } = await supabase
+        .from("team_join_requests")
+        .update({
+          status: action,
+          responded_at: new Date().toISOString(),
+          responded_by: user?.id,
+        })
+        .eq("id", requestId);
+
+      if (error) throw error;
+
+      setPendingApprovals((prev) => prev.filter((req) => req.id !== requestId));
+
+      alert(
+        action === "approved"
+          ? "参加申請を承認しました"
+          : "参加申請を却下しました"
+      );
+
+      fetchDashboardData();
+    } catch (error) {
+      console.error("申請処理エラー:", error);
+      alert("処理に失敗しました");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">
+            ようこそ、{userProfile?.display_name || "ユーザー"}さん
+          </h1>
+          <p className="mt-2 text-gray-600">
+            草野球 is Goodへようこそ。今日も楽しく野球をしましょう！
+          </p>
+        </div>
+
+        {}
+        {pendingAttendances.length > 0 && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <svg
+                  className="h-5 w-5 text-yellow-400"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <div className="ml-3 flex-1">
+                <h3 className="text-sm font-medium text-yellow-800">
+                  出欠の回答をしてください🙇
+                </h3>
+                <div className="mt-2 text-sm text-yellow-700">
+                  <p className="mb-2">以下の試合の出欠確認が未回答です：</p>
+                  <ul className="space-y-1">
+                    {pendingAttendances.map((attendance) => (
+                      <li key={attendance.game_id}>
+                        <Link
+                          href={`/games/${attendance.game_id}`}
+                          className="underline hover:text-yellow-900"
+                        >
+                          {new Date(attendance.game_date).toLocaleDateString(
+                            "ja-JP"
+                          )}
+                          {attendance.game_time && ` ${attendance.game_time}`}
+                          {" - "}
+                          {attendance.game_name}（{attendance.team_name}）
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {}
+        {user && <PersonalStats userId={user.id} />}
+
+        {}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-2xl font-bold text-gray-900">
+              {stats.totalTeams}
+            </div>
+            <div className="text-sm text-gray-600">所属チーム</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-2xl font-bold text-gray-900">
+              {stats.totalGames}
+            </div>
+            <div className="text-sm text-gray-600">総試合数</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-2xl font-bold text-gray-900">
+              {stats.upcomingGames}
+            </div>
+            <div className="text-sm text-gray-600">予定試合</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-2xl font-bold text-gray-900">
+              {stats.completedGames}
+            </div>
+            <div className="text-sm text-gray-600">完了試合</div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="text-2xl font-bold text-gray-900">
+              {stats.pendingRequests}
+            </div>
+            <div className="text-sm text-gray-600">申請中</div>
+          </div>
+        </div>
+
+        {}
+        {pendingApprovals.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <h3 className="text-lg font-semibold text-blue-900 mb-3">
+              承認待ちの参加申請
+            </h3>
+            <div className="space-y-2">
+              {pendingApprovals.map((request) => (
+                <div
+                  key={request.id}
+                  className="flex items-center justify-between bg-white p-3 rounded"
+                >
+                  <div>
+                    <span className="font-medium">{request.teams.name}</span>
+                    への参加申請があります
+                  </div>
+                  <div className="space-x-2">
+                    <button
+                      onClick={() =>
+                        handleRequestAction(request.id, "approved")
+                      }
+                      className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                    >
+                      承認
+                    </button>
+                    <button
+                      onClick={() =>
+                        handleRequestAction(request.id, "rejected")
+                      }
+                      className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                    >
+                      却下
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {}
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-6 py-4 border-b">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  所属チーム
+                </h2>
+                <Link
+                  href="/teams"
+                  className="text-blue-600 hover:text-blue-700"
+                >
+                  すべて見る →
+                </Link>
+              </div>
+            </div>
+            <div className="p-6">
+              {teams.length > 0 ? (
+                <div className="space-y-4">
+                  {teams.slice(0, 3).map((team) => (
+                    <div
+                      key={team.id}
+                      className="border rounded-lg p-4 hover:bg-gray-50"
+                    >
+                      <Link
+                        href={`/teams/${team.id}`}
+                        className="text-lg font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        {team.name}
+                      </Link>
+                      {team.description && (
+                        <p className="text-sm text-gray-600 mt-1">
+                          {team.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500">まだチームに所属していません</p>
+              )}
+            </div>
+          </div>
+
+          {}
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-6 py-4 border-b">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  最近の試合
+                </h2>
+                <Link
+                  href="/games"
+                  className="text-blue-600 hover:text-blue-700"
+                >
+                  すべて見る →
+                </Link>
+              </div>
+            </div>
+            <div className="p-6">
+              {games.length > 0 ? (
+                <div className="space-y-4">
+                  {games.slice(0, 3).map((game) => (
+                    <div
+                      key={game.id}
+                      className="border rounded-lg p-4 hover:bg-gray-50"
+                    >
+                      <Link
+                        href={`/games/${game.id}`}
+                        className="text-lg font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        {game.name}
+                      </Link>
+                      <div className="mt-1 text-sm text-gray-600">
+                        <p>
+                          {new Date(game.game_date).toLocaleDateString("ja-JP")}
+                          {game.game_time && ` ${game.game_time}`}
+                        </p>
+                        <p>vs {game.opponent_name}</p>
+                        {game.status === "completed" && (
+                          <p className="font-medium">
+                            スコア: {game.home_score} - {game.opponent_score}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500">試合の予定がありません</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {}
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Link
+            href="/teams/create"
+            className="bg-green-600 text-white text-center py-4 rounded-lg hover:bg-green-700 transition-colors"
+          >
+            新しいチームを作成
+          </Link>
+          <Link
+            href="/games/create"
+            className="bg-blue-600 text-white text-center py-4 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            試合を作成
+          </Link>
+          <Link
+            href="/search/teams"
+            className="bg-purple-600 text-white text-center py-4 rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            チームを探す
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/app/dashboard/settings/page.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+
+export default function SettingsPage() {
+  const [displayName, setDisplayName] = useState("");
+  const [originalName, setOriginalName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const { user } = useAuth();
+  const router = useRouter();
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+    fetchProfile();
+  }, [user]);
+
+  const fetchProfile = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("user_profiles")
+        .select("display_name")
+        .eq("id", user?.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error("プロフィール取得エラー:", error);
+      }
+
+      if (data) {
+        setDisplayName(data.display_name || "");
+        setOriginalName(data.display_name || "");
+      }
+    } catch (error) {
+      console.error("プロフィール取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!displayName.trim()) {
+      setError("ユーザー名を入力してください");
+      return;
+    }
+
+    if (displayName.length < 2 || displayName.length > 20) {
+      setError("ユーザー名は2文字以上20文字以内で入力してください");
+      return;
+    }
+
+    if (displayName === originalName) {
+      setError("変更がありません");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const { error: updateError } = await supabase
+        .from("user_profiles")
+        .upsert({
+          id: user?.id,
+          display_name: displayName.trim(),
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'id'
+        });
+
+      if (updateError) {
+        console.error("更新エラー:", updateError);
+        setError("更新に失敗しました");
+        return;
+      }
+
+      setOriginalName(displayName);
+      setMessage("ユーザー名を更新しました");
+
+      setTimeout(() => setMessage(null), 3000);
+    } catch (error) {
+      console.error("エラー:", error);
+      setError("予期しないエラーが発生しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
+        {}
+        <div className="mb-6">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center text-gray-600 hover:text-gray-900"
+          >
+            <svg
+              className="w-5 h-5 mr-2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 19l-7-7 7-7"
+              />
+            </svg>
+            ダッシュボードに戻る
+          </Link>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <h1 className="text-2xl font-bold text-gray-900 mb-6">
+            アカウント設定
+          </h1>
+
+          {error && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-red-600">{error}</p>
+            </div>
+          )}
+
+          {message && (
+            <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+              <p className="text-green-600">{message}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit}>
+            {}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                メールアドレス
+              </label>
+              <input
+                type="email"
+                value={user?.email || ""}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500"
+                disabled
+              />
+            </div>
+
+            {}
+            <div className="mb-6">
+              <label
+                htmlFor="displayName"
+                className="block text-sm font-medium text-gray-700 mb-2"
+              >
+                ユーザー名（ニックネーム）
+              </label>
+              <input
+                id="displayName"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="例: 野球太郎"
+                maxLength={20}
+                required
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                2〜20文字で入力してください
+              </p>
+            </div>
+
+            {}
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={saving || !displayName.trim() || displayName === originalName}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? "保存中..." : "変更を保存"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/app/layout.tsx
+================================================================================
+
+import "./globals.css";
+import { Inter } from "next/font/google";
+import Header from "@/components/Header";
+import { AuthProvider } from "@/components/auth/AuthProvider";
+
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata = {
+  title: "草野球 is Good",
+  description: "草野球チーム・試合管理のためのWebアプリケーション",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="ja">
+      <body className={inter.className}>
+        <AuthProvider>
+          <Header />
+          <main>{children}</main>
+        </AuthProvider>
+      </body>
+    </html>
+  );
+}
+
+
+================================================================================
+FILE: src/app/page.tsx
+================================================================================
+
+import Link from "next/link";
+
+export default function Home() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {}
+      <section className="relative overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
+          <div className="text-center">
+            <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6">
+              ⚾️ 草野球 is Good
+            </h1>
+            <p className="text-xl md:text-2xl text-gray-600 mb-8 max-w-3xl mx-auto">
+              チーム管理から試合のスコア入力まで、草野球に必要なすべてを一つのアプリで
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Link
+                href="/login"
+                className="bg-blue-600 text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-blue-700 transition-colors"
+              >
+                今すぐ始める
+              </Link>
+              <Link
+                href="/search/games"
+                className="border border-blue-600 text-blue-600 px-8 py-4 rounded-lg text-lg font-semibold hover:bg-blue-50 transition-colors"
+              >
+                試合を見る
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {}
+      <section className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+              主な機能
+            </h2>
+            <p className="text-xl text-gray-600">
+              草野球チームの運営をサポートする豊富な機能
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {}
+            <div className="text-center p-6">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-blue-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM9 9a2 2 0 11-4 0 2 2 0 014 0z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                チーム管理
+              </h3>
+              <p className="text-gray-600">
+                チーム作成、メンバー招待、権限管理まで。チーム運営をスムーズに。
+              </p>
+            </div>
+
+            {}
+            <div className="text-center p-6">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-green-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                試合管理
+              </h3>
+              <p className="text-gray-600">
+                試合の企画から結果記録まで。個人でもチームでも簡単に試合を作成。
+              </p>
+            </div>
+
+            {}
+            <div className="text-center p-6">
+              <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-purple-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                リアルタイムスコア
+              </h3>
+              <p className="text-gray-600">
+                複数端末から同時入力可能。試合の進行をリアルタイムで共有。
+              </p>
+            </div>
+
+            {}
+            <div className="text-center p-6">
+              <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-yellow-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                検索・発見
+              </h3>
+              <p className="text-gray-600">
+                近くのチームや試合を検索。新しい野球仲間との出会いを作ります。
+              </p>
+            </div>
+
+            {}
+            <div className="text-center p-6">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-red-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                モバイル対応
+              </h3>
+              <p className="text-gray-600">
+                スマートフォンでも使いやすい設計。グラウンドでもスムーズに操作。
+              </p>
+            </div>
+
+            {}
+            <div className="text-center p-6">
+              <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg
+                  className="w-8 h-8 text-indigo-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                完全無料
+              </h3>
+              <p className="text-gray-600">
+                すべての機能を無料で利用可能。草野球をもっと楽しく、もっと簡単に。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {}
+      <section className="py-24 bg-gradient-to-r from-blue-600 to-indigo-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+            今すぐ始めましょう
+          </h2>
+          <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
+            Googleアカウントまたは GitHubアカウントで簡単にログイン
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link
+              href="/login"
+              className="bg-white text-blue-600 px-8 py-4 rounded-lg text-lg font-semibold hover:bg-gray-100 transition-colors"
+            >
+              アカウント作成・ログイン
+            </Link>
+            <Link
+              href="/search/games"
+              className="border border-white text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-white hover:text-blue-600 transition-colors"
+            >
+              まずは試合を見てみる
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {}
+      <footer className="bg-gray-900 text-white py-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4">⚾️ 草野球 is Good</h3>
+              <p className="text-gray-400">
+                草野球チーム・試合管理のためのWebアプリケーション
+              </p>
+            </div>
+            <div>
+              <h4 className="text-md font-semibold mb-4">リンク</h4>
+              <ul className="space-y-2">
+                <li>
+                  <Link
+                    href="/search/games"
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    試合検索
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/search/teams"
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    チーム検索
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/login"
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    ログイン
+                  </Link>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="text-md font-semibold mb-4">サポート</h4>
+              <ul className="space-y-2">
+                <li>
+                  <a
+                    href="#"
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    利用規約
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="#"
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    プライバシーポリシー
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="#"
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    お問い合わせ
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400">
+            <p>&copy; 2025 草野球 is Good. All rights reserved.</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/app/search/games/page.tsx
+================================================================================
+
+import PublicGameSearch from '@/components/search/PublicGameSearch';
+
+export default function GameSearchPage() {
+  return <PublicGameSearch />;
+}
+
+
+================================================================================
+FILE: src/app/search/teams/page.tsx
+================================================================================
+
+import PublicTeamSearch from '@/components/search/PublicTeamSearch';
+
+export default function TeamSearchPage() {
+  return <PublicTeamSearch />;
+}
+
+
+================================================================================
+FILE: src/components/search/PublicGameSearch.tsx
+================================================================================
+
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useAuth } from "@/components/auth/AuthProvider";
+import Link from "next/link";
+
+interface Game {
+  id: string;
+  name: string;
+  game_date: string;
+  game_time: string | null;
+  location: string | null;
+  opponent_name: string;
+  status: string;
+  home_score: number;
+  opponent_score: number;
+  record_type: string;
+  is_public: boolean;
+  created_at: string;
+  home_team_id: string | null;
+  category: 'official' | 'practice' | 'scrimmage' | null;
+}
+
+interface SearchFilters {
+  keyword: string;
+  status: string;
+  dateFrom: string;
+  dateTo: string;
+  category: string;
+}
+
+export default function PublicGameSearch() {
+  const [games, setGames] = useState<Game[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [userTeamIds, setUserTeamIds] = useState<string[]>([]);
+  const [filters, setFilters] = useState<SearchFilters>({
+    keyword: "",
+    status: "",
+    dateFrom: "",
+    dateTo: "",
+    category: "",
+  });
+
+  const { user } = useAuth();
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    fetchUserTeams();
+  }, [user]);
+
+  useEffect(() => {
+    fetchGames();
+  }, [filters, userTeamIds]);
+
+  const fetchUserTeams = async () => {
+    if (!user) {
+      setUserTeamIds([]);
+      return;
+    }
+
+    try {
+      const teamIds: string[] = [];
+
+      const { data: ownedTeams } = await supabase
+        .from("teams")
+        .select("id")
+        .eq("owner_id", user.id);
+
+      if (ownedTeams) {
+        teamIds.push(...ownedTeams.map((t) => t.id));
+      }
+
+      const { data: memberTeams } = await supabase
+        .from("team_members")
+        .select("team_id")
+        .eq("user_id", user.id);
+
+      if (memberTeams) {
+        teamIds.push(...memberTeams.map((t) => t.team_id));
+      }
+
+      setUserTeamIds([...new Set(teamIds)]);
+    } catch (error) {
+      console.error("チーム情報の取得に失敗しました:", error);
+    }
+  };
+
+  const fetchGames = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      let query = supabase.from("games").select("*");
+
+      if (user) {
+
+        if (userTeamIds.length > 0) {
+          query = query.or(
+            `is_public.eq.true,home_team_id.in.(${`{${userTeamIds.join(
+              ","
+            )}}`}),created_by.eq.${user.id}`
+          );
+        } else {
+
+          query = query.or(`is_public.eq.true,created_by.eq.${user.id}`);
+        }
+      } else {
+
+        query = query.eq("is_public", true);
+      }
+
+      if (filters.status) {
+        query = query.eq("status", filters.status);
+      } else if (!user || userTeamIds.length === 0) {
+
+        query = query.eq("status", "completed");
+      }
+
+      if (filters.category) {
+        query = query.eq("category", filters.category);
+      }
+
+      if (filters.keyword) {
+        query = query.or(
+          `name.ilike.%${filters.keyword}%,opponent_name.ilike.%${filters.keyword}%,location.ilike.%${filters.keyword}%`
+        );
+      }
+
+      if (filters.dateFrom) {
+        query = query.gte("game_date", filters.dateFrom);
+      }
+      if (filters.dateTo) {
+        query = query.lte("game_date", filters.dateTo);
+      }
+
+      query = query.order("game_date", { ascending: false });
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw error;
+      }
+
+      let filteredGames = data || [];
+
+      if (!user) {
+
+        filteredGames = filteredGames.filter((game) => game.status === 'completed');
+      } else {
+
+        filteredGames = filteredGames.filter((game) => {
+
+          if (game.status === 'completed' || game.status === 'cancelled') {
+            return true;
+          }
+
+          if (game.status === 'scheduled' || game.status === 'in_progress') {
+
+            if (game.created_by === user.id) {
+              return true;
+            }
+
+            if (game.home_team_id && userTeamIds.includes(game.home_team_id)) {
+              return true;
+            }
+
+            return false;
+          }
+
+          return true;
+        });
+      }
+
+      setGames(filteredGames);
+    } catch (error: any) {
+      console.error("試合情報の取得に失敗しました:", error?.message || error);
+      setError("試合情報の取得に失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFilterChange = (key: keyof SearchFilters, value: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      keyword: "",
+      status: "",
+      dateFrom: "",
+      dateTo: "",
+      category: "",
+    });
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "scheduled":
+        return {
+          label: "予定",
+          class: "bg-gray-100 text-gray-800",
+        };
+      case "in_progress":
+        return {
+          label: "進行中",
+          class: "bg-yellow-100 text-yellow-800",
+        };
+      case "completed":
+        return {
+          label: "終了",
+          class: "bg-green-100 text-green-800",
+        };
+      case "cancelled":
+        return {
+          label: "中止",
+          class: "bg-red-100 text-red-800",
+        };
+      default:
+        return {
+          label: status,
+          class: "bg-gray-100 text-gray-800",
+        };
+    }
+  };
+  const getCategoryBadge = (category: string | null) => {
+    switch (category) {
+      case "official":
+        return {
+          label: "公式戦",
+          class: "bg-red-100 text-red-800",
+        };
+      case "practice":
+        return {
+          label: "練習試合",
+          class: "bg-blue-100 text-blue-800",
+        };
+      case "scrimmage":
+        return {
+          label: "紅白戦",
+          class: "bg-green-100 text-green-800",
+        };
+      default:
+        return null;
+    }
+  };
+
+  const isTeamMember = (teamId: string | null) => {
+    if (!teamId) return false;
+    return userTeamIds.includes(teamId);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">試合を探す</h1>
+
+        {}
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div>
+              <label
+                htmlFor="keyword"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                キーワード
+              </label>
+              <input
+                type="text"
+                id="keyword"
+                value={filters.keyword}
+                onChange={(e) => handleFilterChange("keyword", e.target.value)}
+                placeholder="試合名、対戦相手、場所"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="status"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                ステータス
+              </label>
+              <select
+                id="status"
+                value={filters.status}
+                onChange={(e) => handleFilterChange("status", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">すべて</option>
+                <option value="scheduled">予定</option>
+                <option value="in_progress">進行中</option>
+                <option value="completed">終了</option>
+                <option value="cancelled">中止</option>
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="category"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                カテゴリー
+              </label>
+              <select
+                id="category"
+                value={filters.category}
+                onChange={(e) => handleFilterChange("category", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">すべて</option>
+                <option value="official">公式戦</option>
+                <option value="practice">練習試合</option>
+                <option value="scrimmage">紅白戦</option>
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="dateFrom"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                開始日
+              </label>
+              <input
+                type="date"
+                id="dateFrom"
+                value={filters.dateFrom}
+                onChange={(e) => handleFilterChange("dateFrom", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="dateTo"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
+                終了日
+              </label>
+              <input
+                type="date"
+                id="dateTo"
+                value={filters.dateTo}
+                onChange={(e) => handleFilterChange("dateTo", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={resetFilters}
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 underline"
+            >
+              フィルターをリセット
+            </button>
+          </div>
+        </div>
+
+        {}
+        {error ? (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+            {error}
+          </div>
+        ) : loading ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="text-gray-500 mt-4">検索中...</p>
+          </div>
+        ) : games.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
+            <svg
+              className="mx-auto h-12 w-12 text-gray-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <h3 className="text-lg font-medium text-gray-900 mt-2">
+              試合が見つかりませんでした
+            </h3>
+            <p className="text-gray-500 mt-1">
+              検索条件を変更してもう一度お試しください
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {games.map((game) => {
+              const statusBadge = getStatusBadge(game.status);
+              const isMember = isTeamMember(game.home_team_id);
+
+              return (
+                <div
+                  key={game.id}
+                  className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <h3 className="text-lg font-medium text-gray-900 truncate flex-1">
+                      {game.name}
+                    </h3>
+                    <div className="flex items-center space-x-2">
+                      <span
+                        className={`px-2 py-1 text-xs font-medium rounded-full ${statusBadge.class}`}
+                      >
+                        {statusBadge.label}
+                      </span>
+                      {game.category && getCategoryBadge(game.category) && (
+                        <span
+                          className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            getCategoryBadge(game.category)!.class
+                          }`}
+                        >
+                          {getCategoryBadge(game.category)!.label}
+                        </span>
+                      )}
+                      {isMember && (
+                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
+                          所属
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 text-sm text-gray-600 mb-4">
+                    <div className="flex items-center space-x-1">
+                      <svg
+                        className="w-4 h-4 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                        />
+                      </svg>
+                      <span>
+                        {new Date(game.game_date).toLocaleDateString("ja-JP")}
+                      </span>
+                      {game.game_time && <span>• {game.game_time}</span>}
+                    </div>
+
+                    {game.location && (
+                      <div className="flex items-center space-x-1">
+                        <svg
+                          className="w-4 h-4 text-gray-400"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </svg>
+                        <span className="truncate">{game.location}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center space-x-1">
+                      <svg
+                        className="w-4 h-4 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                        />
+                      </svg>
+                      <span>vs {game.opponent_name}</span>
+                    </div>
+                  </div>
+
+                  {}
+                  {(game.status === "completed" ||
+                    game.status === "in_progress") && (
+                    <div className="flex justify-center items-center space-x-4 py-3 mb-4 bg-gray-50 rounded-md">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-gray-900">
+                          {game.home_score}
+                        </div>
+                        <div className="text-xs text-gray-500">自チーム</div>
+                      </div>
+                      <div className="text-gray-400">-</div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-gray-900">
+                          {game.opponent_score}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {game.opponent_name}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center space-x-2 text-xs text-gray-500">
+                      <span
+                        className={
+                          game.record_type === "team"
+                            ? "bg-blue-100 text-blue-700 px-2 py-1 rounded"
+                            : "bg-green-100 text-green-700 px-2 py-1 rounded"
+                        }
+                      >
+                        {game.record_type === "team"
+                          ? "チーム記録"
+                          : "個人記録"}
+                      </span>
+                      {!game.is_public && (
+                        <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                          🔒 非公開
+                        </span>
+                      )}
+                    </div>
+                    <Link
+                      href={`/games/${game.id}?from=search`}
+                      className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                    >
+                      詳細を見る →
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/search/PublicTeamSearch.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import Link from "next/link";
+import { prefectures } from "@/lib/japanData";
+
+interface Team {
+  id: string;
+  name: string;
+  description: string;
+  prefecture: string | null;
+  city: string | null;
+  created_at: string;
+}
+
+export default function PublicTeamSearch() {
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedPrefecture, setSelectedPrefecture] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    fetchTeams();
+  }, []);
+
+  const fetchTeams = async () => {
+    try {
+      setError(null);
+
+      let query = supabase
+        .from("teams")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (selectedPrefecture) {
+        query = query.eq("prefecture", selectedPrefecture);
+      }
+
+      const { data, error: fetchError } = await query;
+
+      if (fetchError) {
+        console.error("チーム取得エラー:", fetchError);
+        setError("チームの取得に失敗しました");
+        setTeams([]);
+      } else {
+        setTeams(data || []);
+      }
+    } catch (error) {
+      console.error("予期しないエラー:", error);
+      setError("予期しないエラーが発生しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = async () => {
+    setLoading(true);
+    try {
+      let query = supabase
+        .from("teams")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (searchTerm) {
+        query = query.ilike("name", `%${searchTerm}%`);
+      }
+
+      if (selectedPrefecture) {
+        query = query.eq("prefecture", selectedPrefecture);
+      }
+
+      const { data, error: searchError } = await query;
+
+      if (searchError) {
+        console.error("検索エラー:", searchError);
+        setError("検索中にエラーが発生しました");
+        setTeams([]);
+      } else {
+        setTeams(data || []);
+      }
+    } catch (error) {
+      console.error("検索エラー:", error);
+      setError("検索中にエラーが発生しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearFilters = () => {
+    setSelectedPrefecture("");
+    setSearchTerm("");
+    fetchTeams();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">チーム検索</h1>
+
+        {}
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-600">{error}</p>
+          </div>
+        )}
+
+        {}
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="flex flex-col space-y-4">
+            <div className="flex gap-4">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleSearch()}
+                placeholder="チーム名で検索..."
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <select
+                value={selectedPrefecture}
+                onChange={(e) => setSelectedPrefecture(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">全都道府県</option>
+                {prefectures.map((pref) => (
+                  <option key={pref} value={pref}>
+                    {pref}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleSearch}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                検索
+              </button>
+            </div>
+            {(selectedPrefecture || searchTerm) && (
+              <div className="flex justify-between items-center">
+                <div className="text-sm text-gray-600">
+                  {selectedPrefecture && (
+                    <span className="mr-2">
+                      都道府県: <span className="font-medium">{selectedPrefecture}</span>
+                    </span>
+                  )}
+                  {searchTerm && (
+                    <span>
+                      キーワード: <span className="font-medium">{searchTerm}</span>
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={clearFilters}
+                  className="text-sm text-blue-600 hover:text-blue-700"
+                >
+                  フィルターをクリア
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {}
+        {teams.length === 0 ? (
+          <div className="bg-white rounded-lg shadow p-8 text-center">
+            <p className="text-gray-600">
+              {searchTerm || selectedPrefecture
+                ? "検索条件に一致するチームが見つかりませんでした"
+                : "公開されているチームがありません"}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {teams.map((team) => (
+              <div
+                key={team.id}
+                className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6"
+              >
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  {team.name}
+                </h3>
+                <p className="text-gray-600 mb-2 line-clamp-2">
+                  {team.description || "チームの説明はありません"}
+                </p>
+                {(team.prefecture || team.city) && (
+                  <div className="flex items-center text-sm text-gray-500 mb-2">
+                    <svg
+                      className="w-4 h-4 mr-1"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <span>
+                      {team.prefecture}{team.city && ` ${team.city}`}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between mt-4">
+                  <span className="text-sm text-gray-500">
+                    {new Date(team.created_at).toLocaleDateString("ja-JP")}
+                  </span>
+                  <Link
+                    href={`/teams/${team.id}`}
+                    className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                  >
+                    詳細を見る →
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/stats/PersonalStats.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface BattingStats {
+  player_id: string;
+  total_games: number;
+  total_at_bats: number;
+  total_hits: number;
+  total_home_runs: number;
+  total_doubles: number;
+  total_triples: number;
+  total_rbi: number;
+  total_runs: number;
+  total_walks: number;
+  total_stolen_bases: number;
+  batting_average: string;
+  on_base_percentage: string;
+  slugging_percentage: string;
+  ops: string;
+}
+
+interface PitchingStats {
+  player_id: string;
+  total_games: number;
+  total_innings: number;
+  total_innings_display: string;
+  total_hits_allowed: number;
+  total_runs_allowed: number;
+  total_earned_runs: number;
+  total_strikeouts: number;
+  total_walks: number;
+  total_home_runs_allowed: number;
+  era: string;
+  whip: string;
+  k_per_nine: string;
+  bb_per_nine: string;
+}
+
+interface PersonalStatsProps {
+  userId: string;
+}
+
+export default function PersonalStats({ userId }: PersonalStatsProps) {
+  const [battingStats, setBattingStats] = useState<BattingStats | null>(null);
+  const [pitchingStats, setPitchingStats] = useState<PitchingStats | null>(
+    null
+  );
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"batting" | "pitching">("batting");
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    if (userId) {
+      fetchStats();
+    }
+  }, [userId]);
+
+  const fetchStats = async () => {
+    setLoading(true);
+    try {
+
+      const { data: teamMemberData, error: teamMemberError } = await supabase
+        .from("team_members")
+        .select("id")
+        .eq("user_id", userId);
+
+      if (teamMemberError) {
+        console.error("チームメンバー取得エラー:", teamMemberError);
+        setLoading(false);
+        return;
+      }
+
+      if (!teamMemberData || teamMemberData.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const teamMemberIds = teamMemberData.map((tm) => tm.id);
+
+      const { data: gamePlayerData, error: gamePlayerError } = await supabase
+        .from("game_players")
+        .select("id")
+        .in("team_member_id", teamMemberIds);
+
+      if (gamePlayerError) {
+        console.error("ゲームプレイヤー取得エラー:", gamePlayerError);
+        setLoading(false);
+        return;
+      }
+
+      if (!gamePlayerData || gamePlayerData.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const gamePlayerIds = gamePlayerData.map((gp) => gp.id);
+
+      const { data: battingData, error: battingError } = await supabase
+        .from("player_batting_stats")
+        .select("*")
+        .in("player_id", gamePlayerIds);
+
+      if (battingData && battingData.length > 0) {
+        const stats = calculateBattingTotals(battingData);
+        setBattingStats(stats);
+      }
+
+      const { data: pitchingData, error: pitchingError } = await supabase
+        .from("player_pitching_stats")
+        .select("*")
+        .in("player_id", gamePlayerIds);
+
+      if (pitchingData && pitchingData.length > 0) {
+        const stats = calculatePitchingTotals(pitchingData);
+        setPitchingStats(stats);
+      }
+    } catch (error) {
+      console.error("成績取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const calculateBattingTotals = (data: any[]): BattingStats => {
+    const totals = data.reduce(
+      (acc, game) => ({
+        total_games: acc.total_games + 1,
+        total_at_bats: acc.total_at_bats + (game.at_bats || 0),
+        total_hits: acc.total_hits + (game.hits || 0),
+        total_home_runs: acc.total_home_runs + (game.home_runs || 0),
+        total_doubles: acc.total_doubles + (game.doubles || 0),
+        total_triples: acc.total_triples + (game.triples || 0),
+        total_rbi: acc.total_rbi + (game.rbi || 0),
+        total_runs: acc.total_runs + (game.runs || 0),
+        total_walks: acc.total_walks + (game.walks || 0),
+        total_stolen_bases: acc.total_stolen_bases + (game.stolen_bases || 0),
+      }),
+      {
+        total_games: 0,
+        total_at_bats: 0,
+        total_hits: 0,
+        total_home_runs: 0,
+        total_doubles: 0,
+        total_triples: 0,
+        total_rbi: 0,
+        total_runs: 0,
+        total_walks: 0,
+        total_stolen_bases: 0,
+      }
+    );
+
+    const avg =
+      totals.total_at_bats > 0
+        ? (totals.total_hits / totals.total_at_bats).toFixed(3)
+        : ".000";
+
+    const plateAppearances = totals.total_at_bats + totals.total_walks;
+    const obp =
+      plateAppearances > 0
+        ? ((totals.total_hits + totals.total_walks) / plateAppearances).toFixed(
+            3
+          )
+        : ".000";
+
+    const totalBases =
+      totals.total_hits +
+      totals.total_doubles +
+      totals.total_triples * 2 +
+      totals.total_home_runs * 3;
+    const slg =
+      totals.total_at_bats > 0
+        ? (totalBases / totals.total_at_bats).toFixed(3)
+        : ".000";
+
+    const ops = (parseFloat(obp) + parseFloat(slg)).toFixed(3);
+
+    return {
+      player_id: userId,
+      ...totals,
+      batting_average: avg,
+      on_base_percentage: obp,
+      slugging_percentage: slg,
+      ops: ops,
+    };
+  };
+
+  const calculatePitchingTotals = (data: any[]): PitchingStats => {
+    const totals = data.reduce(
+      (acc, game) => ({
+        total_games: acc.total_games + 1,
+        total_innings: acc.total_innings + (game.innings_pitched || 0),
+        total_hits_allowed: acc.total_hits_allowed + (game.hits_allowed || 0),
+        total_runs_allowed: acc.total_runs_allowed + (game.runs_allowed || 0),
+        total_earned_runs: acc.total_earned_runs + (game.earned_runs || 0),
+        total_strikeouts: acc.total_strikeouts + (game.strikeouts || 0),
+        total_walks: acc.total_walks + (game.walks || 0),
+        total_home_runs_allowed:
+          acc.total_home_runs_allowed + (game.home_runs_allowed || 0),
+      }),
+      {
+        total_games: 0,
+        total_innings: 0,
+        total_hits_allowed: 0,
+        total_runs_allowed: 0,
+        total_earned_runs: 0,
+        total_strikeouts: 0,
+        total_walks: 0,
+        total_home_runs_allowed: 0,
+      }
+    );
+
+    const inningsDisplay = formatInnings(totals.total_innings);
+
+    const actualInnings =
+      Math.floor(totals.total_innings) +
+      ((totals.total_innings % 1) * 10) / 3;
+
+    const era =
+      actualInnings > 0
+        ? ((totals.total_earned_runs * 7) / actualInnings).toFixed(2)
+        : "0.00";
+
+    const whip =
+      actualInnings > 0
+        ? (
+            (totals.total_walks + totals.total_hits_allowed) /
+            actualInnings
+          ).toFixed(2)
+        : "0.00";
+
+    const kPerNine =
+      actualInnings > 0
+        ? ((totals.total_strikeouts * 7) / actualInnings).toFixed(2)
+        : "0.00";
+
+    const bbPerNine =
+      actualInnings > 0
+        ? ((totals.total_walks * 7) / actualInnings).toFixed(2)
+        : "0.00";
+
+    return {
+      player_id: userId,
+      ...totals,
+      total_innings_display: inningsDisplay,
+      era: era,
+      whip: whip,
+      k_per_nine: kPerNine,
+      bb_per_nine: bbPerNine,
+    };
+  };
+
+  const formatInnings = (innings: number): string => {
+    const wholeInnings = Math.floor(innings);
+    const outs = Math.round((innings % 1) * 10);
+
+    if (outs === 0) return `${wholeInnings}.0`;
+    if (outs === 1) return `${wholeInnings}.1`;
+    if (outs === 2) return `${wholeInnings}.2`;
+    return `${wholeInnings}.0`;
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!battingStats && !pitchingStats) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6 mb-8">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">個人成績</h3>
+        <p className="text-gray-500 text-center py-8">
+          まだ成績データがありません
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg shadow mb-8">
+      <div className="px-6 py-4 border-b">
+        <h3 className="text-lg font-semibold text-gray-900">個人成績</h3>
+      </div>
+
+      {}
+      <div className="border-b">
+        <div className="flex">
+          {battingStats && (
+            <button
+              onClick={() => setActiveTab("batting")}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "batting"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              打撃成績
+            </button>
+          )}
+          {pitchingStats && (
+            <button
+              onClick={() => setActiveTab("pitching")}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "pitching"
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              投手成績
+            </button>
+          )}
+        </div>
+      </div>
+
+      {}
+      <div className="p-6">
+        {activeTab === "batting" && battingStats && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            <div>
+              <dt className="text-sm text-gray-500">試合数</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.total_games}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">打率</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.batting_average}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">本塁打</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.total_home_runs}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">打点</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.total_rbi}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">安打</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.total_hits}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">得点</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.total_runs}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">盗塁</dt>
+              <dd className="text-xl font-semibold">
+                {battingStats.total_stolen_bases}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">OPS</dt>
+              <dd className="text-xl font-semibold">{battingStats.ops}</dd>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "pitching" && pitchingStats && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            <div>
+              <dt className="text-sm text-gray-500">登板数</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.total_games}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">投球回</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.total_innings_display}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">防御率</dt>
+              <dd className="text-xl font-semibold">{pitchingStats.era}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">奪三振</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.total_strikeouts}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">WHIP</dt>
+              <dd className="text-xl font-semibold">{pitchingStats.whip}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">K/7</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.k_per_nine}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">BB/7</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.bb_per_nine}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">被安打</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.total_hits_allowed}
+              </dd>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/stats/TeamMemberStats.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface MemberBattingStats {
+  member_id: string;
+  member_name: string;
+  games: number;
+  at_bats: number;
+  hits: number;
+  doubles: number;
+  triples: number;
+  home_runs: number;
+  rbi: number;
+  runs: number;
+  walks: number;
+  stolen_bases: number;
+  batting_average: string;
+  on_base_percentage: string;
+  slugging_percentage: string;
+  ops: string;
+}
+
+interface MemberPitchingStats {
+  member_id: string;
+  member_name: string;
+  games: number;
+  innings_pitched: number;
+  innings_display: string;
+  hits_allowed: number;
+  runs_allowed: number;
+  earned_runs: number;
+  strikeouts: number;
+  walks: number;
+  home_runs_allowed: number;
+  wins: number;
+  losses: number;
+  era: string;
+  whip: string;
+  k_per_nine: string;
+  bb_per_nine: string;
+}
+
+interface TeamMemberStatsProps {
+  teamId: string;
+}
+
+export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
+  const [battingStats, setBattingStats] = useState<MemberBattingStats[]>([]);
+  const [pitchingStats, setPitchingStats] = useState<MemberPitchingStats[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"batting" | "pitching">("batting");
+  const [sortField, setSortField] = useState<string>("batting_average");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    if (teamId) {
+      fetchTeamStats();
+    }
+  }, [teamId]);
+
+  const fetchTeamStats = async () => {
+    setLoading(true);
+    try {
+
+      const { data: teamMembers, error: memberError } = await supabase
+        .from("team_members")
+        .select("id, user_id")
+        .eq("team_id", teamId);
+
+      if (memberError || !teamMembers) {
+        console.error("チームメンバー取得エラー:", memberError);
+        setLoading(false);
+        return;
+      }
+
+      console.log("チームメンバー:", teamMembers);
+
+      const userIds = teamMembers.map(m => m.user_id);
+      const { data: userProfiles } = await supabase
+        .from("user_profiles")
+        .select("id, display_name")
+        .in("id", userIds);
+
+      const userProfileMap = new Map(
+        userProfiles?.map(p => [p.id, p.display_name]) || []
+      );
+
+      const memberGamePlayerMap = new Map<string, { ids: string[], name: string }>();
+
+      for (const member of teamMembers) {
+
+        const { data: gamePlayerData } = await supabase
+          .from("game_players")
+          .select("id, player_name")
+          .eq("team_member_id", member.id);
+
+        if (gamePlayerData && gamePlayerData.length > 0) {
+
+          const displayName = userProfileMap.get(member.user_id) ||
+                             gamePlayerData[0].player_name ||
+                             "名前未設定";
+
+          memberGamePlayerMap.set(member.id, {
+            ids: gamePlayerData.map(gp => gp.id),
+            name: displayName
+          });
+
+          console.log(`メンバー ${displayName}: game_player IDs:`, gamePlayerData.map(gp => gp.id));
+        }
+      }
+
+      console.log("memberGamePlayerMap:", memberGamePlayerMap);
+
+      const { data: teamGames } = await supabase
+        .from("games")
+        .select("id")
+        .eq("home_team_id", teamId);
+
+      if (teamGames && teamGames.length > 0) {
+        const gameIds = teamGames.map(g => g.id);
+        console.log("チームの試合ID:", gameIds);
+
+        const { data: allGamePlayers } = await supabase
+          .from("game_players")
+          .select("id, player_name, team_member_id")
+          .in("game_id", gameIds);
+
+        console.log("すべてのゲームプレイヤー:", allGamePlayers);
+
+        if (allGamePlayers) {
+          const playerNameMap = new Map<string, string[]>();
+
+          for (const gp of allGamePlayers) {
+            if (!gp.team_member_id) {
+
+              const existing = playerNameMap.get(gp.player_name) || [];
+              existing.push(gp.id);
+              playerNameMap.set(gp.player_name, existing);
+            }
+          }
+
+          for (const [playerName, gpIds] of playerNameMap) {
+
+            const exists = Array.from(memberGamePlayerMap.values()).some(
+              v => v.name === playerName
+            );
+
+            if (!exists && gpIds.length > 0) {
+              const pseudoId = `name_${playerName}`;
+              memberGamePlayerMap.set(pseudoId, {
+                ids: gpIds,
+                name: playerName
+              });
+              console.log(`名前ベースで追加: ${playerName}:`, gpIds);
+            }
+          }
+        }
+      }
+
+      const battingStatsList: MemberBattingStats[] = [];
+
+      for (const [memberId, playerInfo] of memberGamePlayerMap) {
+        const { data: battingData, error: battingError } = await supabase
+          .from("player_batting_stats")
+          .select("*")
+          .in("player_id", playerInfo.ids);
+
+        console.log(`メンバー ${playerInfo.name} の打撃データ:`, battingData);
+        if (battingError) {
+          console.error("打撃データ取得エラー:", battingError);
+        }
+
+        if (battingData && battingData.length > 0) {
+          const stats = calculateMemberBattingTotals(memberId, playerInfo.name, battingData);
+          battingStatsList.push(stats);
+        }
+      }
+
+      const pitchingStatsList: MemberPitchingStats[] = [];
+
+      for (const [memberId, playerInfo] of memberGamePlayerMap) {
+        const { data: pitchingData, error: pitchingError } = await supabase
+          .from("player_pitching_stats")
+          .select("*")
+          .in("player_id", playerInfo.ids);
+
+        console.log(`メンバー ${playerInfo.name} の投手データ:`, pitchingData);
+        if (pitchingError) {
+          console.error("投手データ取得エラー:", pitchingError);
+        }
+
+        if (pitchingData && pitchingData.length > 0) {
+          const stats = calculateMemberPitchingTotals(memberId, playerInfo.name, pitchingData);
+          pitchingStatsList.push(stats);
+        }
+      }
+
+      console.log("打撃成績リスト:", battingStatsList);
+      console.log("投手成績リスト:", pitchingStatsList);
+
+      setBattingStats(battingStatsList);
+      setPitchingStats(pitchingStatsList);
+
+    } catch (error) {
+      console.error("成績取得エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const calculateMemberBattingTotals = (
+    memberId: string,
+    memberName: string,
+    data: any[]
+  ): MemberBattingStats => {
+    const totals = data.reduce(
+      (acc, game) => ({
+        games: acc.games + 1,
+        at_bats: acc.at_bats + (game.at_bats || 0),
+        hits: acc.hits + (game.hits || 0),
+        doubles: acc.doubles + (game.doubles || 0),
+        triples: acc.triples + (game.triples || 0),
+        home_runs: acc.home_runs + (game.home_runs || 0),
+        rbi: acc.rbi + (game.rbi || 0),
+        runs: acc.runs + (game.runs || 0),
+        walks: acc.walks + (game.walks || 0),
+        stolen_bases: acc.stolen_bases + (game.stolen_bases || 0),
+      }),
+      {
+        games: 0,
+        at_bats: 0,
+        hits: 0,
+        doubles: 0,
+        triples: 0,
+        home_runs: 0,
+        rbi: 0,
+        runs: 0,
+        walks: 0,
+        stolen_bases: 0,
+      }
+    );
+
+    const avg = totals.at_bats > 0
+      ? (totals.hits / totals.at_bats).toFixed(3)
+      : ".000";
+
+    const plateAppearances = totals.at_bats + totals.walks;
+    const obp = plateAppearances > 0
+      ? ((totals.hits + totals.walks) / plateAppearances).toFixed(3)
+      : ".000";
+
+    const totalBases = totals.hits + totals.doubles +
+      (totals.triples * 2) + (totals.home_runs * 3);
+    const slg = totals.at_bats > 0
+      ? (totalBases / totals.at_bats).toFixed(3)
+      : ".000";
+
+    const ops = (parseFloat(obp) + parseFloat(slg)).toFixed(3);
+
+    return {
+      member_id: memberId,
+      member_name: memberName,
+      ...totals,
+      batting_average: avg,
+      on_base_percentage: obp,
+      slugging_percentage: slg,
+      ops: ops,
+    };
+  };
+
+  const calculateMemberPitchingTotals = (
+    memberId: string,
+    memberName: string,
+    data: any[]
+  ): MemberPitchingStats => {
+    const totals = data.reduce(
+      (acc, game) => ({
+        games: acc.games + 1,
+        innings_pitched: acc.innings_pitched + (game.innings_pitched || 0),
+        hits_allowed: acc.hits_allowed + (game.hits_allowed || 0),
+        runs_allowed: acc.runs_allowed + (game.runs_allowed || 0),
+        earned_runs: acc.earned_runs + (game.earned_runs || 0),
+        strikeouts: acc.strikeouts + (game.strikeouts || 0),
+        walks: acc.walks + (game.walks || 0),
+        home_runs_allowed: acc.home_runs_allowed + (game.home_runs_allowed || 0),
+        wins: acc.wins,
+        losses: acc.losses,
+      }),
+      {
+        games: 0,
+        innings_pitched: 0,
+        hits_allowed: 0,
+        runs_allowed: 0,
+        earned_runs: 0,
+        strikeouts: 0,
+        walks: 0,
+        home_runs_allowed: 0,
+        wins: 0,
+        losses: 0,
+      }
+    );
+
+    const actualInnings = Math.floor(totals.innings_pitched) +
+      ((totals.innings_pitched % 1) * 10 / 3);
+
+    const inningsDisplay = formatInnings(totals.innings_pitched);
+
+    const era = actualInnings > 0
+      ? ((totals.earned_runs * 7) / actualInnings).toFixed(2)
+      : "0.00";
+
+    const whip = actualInnings > 0
+      ? ((totals.walks + totals.hits_allowed) / actualInnings).toFixed(2)
+      : "0.00";
+
+    const kPerNine = actualInnings > 0
+      ? ((totals.strikeouts * 7) / actualInnings).toFixed(2)
+      : "0.00";
+
+    const bbPerNine = actualInnings > 0
+      ? ((totals.walks * 7) / actualInnings).toFixed(2)
+      : "0.00";
+
+    return {
+      member_id: memberId,
+      member_name: memberName,
+      ...totals,
+      innings_display: inningsDisplay,
+      era: era,
+      whip: whip,
+      k_per_nine: kPerNine,
+      bb_per_nine: bbPerNine,
+    };
+  };
+
+  const formatInnings = (innings: number): string => {
+    const wholeInnings = Math.floor(innings);
+    const outs = Math.round((innings % 1) * 10);
+
+    if (outs === 0) return `${wholeInnings}.0`;
+    if (outs === 1) return `${wholeInnings}.1`;
+    if (outs === 2) return `${wholeInnings}.2`;
+    return `${wholeInnings}.0`;
+  };
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  };
+
+  const sortStats = (stats: any[], field: string) => {
+    return [...stats].sort((a, b) => {
+      let aVal = a[field];
+      let bVal = b[field];
+
+      if (typeof aVal === "string" && aVal.startsWith(".")) {
+        aVal = parseFloat(aVal);
+        bVal = parseFloat(bVal);
+      }
+
+      if (sortDirection === "asc") {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (battingStats.length === 0 && pitchingStats.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">チーム成績</h3>
+        <p className="text-gray-500 text-center py-8">
+          まだ成績データがありません
+        </p>
+      </div>
+    );
+  }
+
+  const sortedBattingStats = sortStats(battingStats, sortField);
+  const sortedPitchingStats = sortStats(pitchingStats, sortField);
+
+  return (
+    <div className="bg-white rounded-lg shadow">
+      <div className="px-6 py-4 border-b">
+        <h3 className="text-lg font-semibold text-gray-900">チーム成績</h3>
+      </div>
+
+      {}
+      <div className="border-b">
+        <div className="flex">
+          <button
+            onClick={() => {
+              setActiveTab("batting");
+              setSortField("batting_average");
+              setSortDirection("desc");
+            }}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "batting"
+                ? "text-blue-600 border-blue-600"
+                : "text-gray-500 border-transparent hover:text-gray-700"
+            }`}
+          >
+            打撃成績 ({battingStats.length}名)
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("pitching");
+              setSortField("era");
+              setSortDirection("asc");
+            }}
+            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "pitching"
+                ? "text-blue-600 border-blue-600"
+                : "text-gray-500 border-transparent hover:text-gray-700"
+            }`}
+          >
+            投手成績 ({pitchingStats.length}名)
+          </button>
+        </div>
+      </div>
+
+      {}
+      <div className="overflow-x-auto">
+        {activeTab === "batting" && battingStats.length > 0 && (
+          <table className="min-w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  選手名
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("games")}
+                >
+                  試合
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("batting_average")}
+                >
+                  打率 {sortField === "batting_average" && (sortDirection === "desc" ? "↓" : "↑")}
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("home_runs")}
+                >
+                  本塁打
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("rbi")}
+                >
+                  打点
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("ops")}
+                >
+                  OPS
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  打数
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  安打
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  二塁打
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  三塁打
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  得点
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  四球
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  盗塁
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  出塁率
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  長打率
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {sortedBattingStats.map((stats, index) => (
+                <tr key={stats.member_id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                    {stats.member_name}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.games}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {stats.batting_average}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.home_runs}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.rbi}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {stats.ops}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.at_bats}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.hits}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.doubles}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.triples}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.runs}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.walks}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.stolen_bases}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.on_base_percentage}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.slugging_percentage}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {activeTab === "pitching" && pitchingStats.length > 0 && (
+          <table className="min-w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  選手名
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("games")}
+                >
+                  登板
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("era")}
+                >
+                  防御率 {sortField === "era" && (sortDirection === "asc" ? "↑" : "↓")}
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("innings_pitched")}
+                >
+                  投球回
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("strikeouts")}
+                >
+                  奪三振
+                </th>
+                <th
+                  className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => handleSort("whip")}
+                >
+                  WHIP
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  被安打
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  失点
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  自責点
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  与四球
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  被本塁打
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  K/7
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  BB/7
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {sortedPitchingStats.map((stats, index) => (
+                <tr key={stats.member_id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                    {stats.member_name}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.games}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {stats.era}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.innings_display}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.strikeouts}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {stats.whip}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.hits_allowed}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.runs_allowed}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.earned_runs}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.walks}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.home_runs_allowed}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.k_per_nine}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.bb_per_nine}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FILE: src/components/stats/TeamOperationStats.tsx
+================================================================================
+
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+
+interface TaskStat {
+  person_name: string;
+  task_type: string;
+  count: number;
+}
+
+interface PersonStat {
+  person_name: string;
+  total_tasks: number;
+  tasks_breakdown: {
+    task_type: string;
+    count: number;
+  }[];
+}
+
+interface TeamOperationStatsProps {
+  teamId: string;
+}
+
+const TASK_LABELS: { [key: string]: { label: string; icon: string } } = {
+  equipment: { label: "用具の保管・運搬", icon: "🎒" },
+  scheduling: { label: "試合を組む", icon: "📅" },
+  coordination: { label: "対戦相手との調整", icon: "🤝" },
+  ground: { label: "グラウンドを用意", icon: "🏟️" },
+  attendance: { label: "出欠を取る", icon: "📋" },
+  umpire: { label: "審判の手配", icon: "⚾" },
+  helper: { label: "助っ人の手配", icon: "👥" },
+  media: { label: "写真・動画撮影", icon: "📸" },
+  accounting: { label: "会計報告", icon: "💰" },
+};
+
+export default function TeamOperationStats({
+  teamId,
+}: TeamOperationStatsProps) {
+  const [personStats, setPersonStats] = useState<PersonStat[]>([]);
+  const [taskStats, setTaskStats] = useState<{ [key: string]: number }>({});
+  const [loading, setLoading] = useState(true);
+  const [year] = useState(new Date().getFullYear());
+  const [totalGames, setTotalGames] = useState(0);
+  const [activeView, setActiveView] = useState<"person" | "task">("person");
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    if (teamId) {
+      fetchOperationStats();
+    }
+  }, [teamId]);
+
+  const fetchOperationStats = async () => {
+    try {
+
+      const startOfYear = `${year}-01-01`;
+      const endOfYear = `${year}-12-31`;
+
+      const { data: gamesData, error: gamesError } = await supabase
+        .from("games")
+        .select("id")
+        .eq("home_team_id", teamId)
+        .gte("game_date", startOfYear)
+        .lte("game_date", endOfYear);
+
+      if (gamesError) {
+        console.error("試合取得エラー:", gamesError);
+        setLoading(false);
+        return;
+      }
+
+      if (!gamesData || gamesData.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      setTotalGames(gamesData.length);
+      const gameIds = gamesData.map((g) => g.id);
+
+      const { data: tasksData, error: tasksError } = await supabase
+        .from("game_operation_tasks")
+        .select("*")
+        .in("game_id", gameIds);
+
+      if (tasksError) {
+        console.error("タスク取得エラー:", tasksError);
+        setLoading(false);
+        return;
+      }
+
+      if (!tasksData || tasksData.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const personMap = new Map<
+        string,
+        {
+          total: number;
+          tasks: Map<string, number>;
+        }
+      >();
+
+      const taskCount: { [key: string]: number } = {};
+
+      tasksData.forEach((task) => {
+
+        const existing = personMap.get(task.person_name) || {
+          total: 0,
+          tasks: new Map<string, number>(),
+        };
+        existing.total++;
+        existing.tasks.set(
+          task.task_type,
+          (existing.tasks.get(task.task_type) || 0) + 1
+        );
+        personMap.set(task.person_name, existing);
+
+        taskCount[task.task_type] = (taskCount[task.task_type] || 0) + 1;
+      });
+
+      const stats: PersonStat[] = Array.from(personMap.entries()).map(
+        ([name, data]) => ({
+          person_name: name,
+          total_tasks: data.total,
+          tasks_breakdown: Array.from(data.tasks.entries())
+            .map(([type, count]) => ({
+              task_type: type,
+              count: count,
+            }))
+            .sort((a, b) => b.count - a.count),
+        })
+      );
+
+      stats.sort((a, b) => b.total_tasks - a.total_tasks);
+
+      setPersonStats(stats);
+      setTaskStats(taskCount);
+    } catch (error) {
+      console.error("集計エラー:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="animate-pulse">
+          <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
+          <div className="space-y-3">
+            <div className="h-3 bg-gray-200 rounded"></div>
+            <div className="h-3 bg-gray-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (personStats.length === 0) {
+    return null;
+  }
+
+  const topContributors = personStats.slice(0, 3);
+
+  return (
+    <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg shadow-lg border border-orange-200">
+      <div className="px-6 py-4 border-b border-orange-200 bg-white bg-opacity-70 rounded-t-lg">
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+            <span className="text-2xl mr-2">🏆</span>
+            {year}年 チーム運営への貢献
+          </h3>
+          <span className="text-sm text-gray-600">
+            {totalGames}試合分の集計
+          </span>
+        </div>
+      </div>
+
+      {}
+      <div className="text-center mt-6 p-4 bg-white bg-opacity-80 rounded-lg">
+        <p className="text-lg font-bold text-orange-800">
+          ✨ チーム運営にご協力いただき、本当にありがとうございます！ ✨
+        </p>
+      </div>
+
+      <div className="p-6">
+        {activeView === "person" ? (
+          <>
+            {}
+            <div className="mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {topContributors.map((person, index) => {
+                  const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : "🥉";
+                  const bgColor =
+                    index === 0
+                      ? "bg-yellow-100"
+                      : index === 1
+                      ? "bg-gray-100"
+                      : "bg-orange-100";
+
+                  return (
+                    <div
+                      key={person.person_name}
+                      className={`${bgColor} rounded-lg p-4 text-center shadow-sm`}
+                    >
+                      <div className="text-3xl mb-2">{medal}</div>
+                      <h4 className="font-bold text-gray-900 text-lg mb-1">
+                        {person.person_name}
+                      </h4>
+                      <p className="text-2xl font-bold text-gray-800 mb-2">
+                        {person.total_tasks}回
+                      </p>
+                      <div className="text-xs text-gray-600 space-y-1">
+                        {person.tasks_breakdown.slice(0, 2).map((task) => {
+                          const taskInfo = TASK_LABELS[task.task_type];
+                          return (
+                            <div key={task.task_type}>
+                              {taskInfo?.icon} {taskInfo?.label}: {task.count}回
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {}
+            <div className="bg-white rounded-lg p-4">
+              <h4 className="font-semibold text-gray-900 mb-3">全貢献者一覧</h4>
+              <div className="space-y-3">
+                {personStats.map((person, index) => (
+                  <div
+                    key={person.person_name}
+                    className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg transition-colors"
+                  >
+                    <div className="flex items-center">
+                      <span className="text-lg font-semibold text-gray-500 w-8">
+                        {index + 1}
+                      </span>
+                      <span className="font-medium text-gray-900 ml-3">
+                        {person.person_name}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="text-right">
+                        <span className="text-xl font-bold text-orange-600">
+                          {person.total_tasks}
+                        </span>
+                        <span className="text-sm text-gray-500 ml-1">回</span>
+                      </div>
+                      <details className="cursor-pointer">
+                        <summary className="text-sm text-blue-600 hover:text-blue-700">
+                          詳細
+                        </summary>
+                        <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg p-3 z-10">
+                          <div className="space-y-1">
+                            {person.tasks_breakdown.map((task) => {
+                              const taskInfo = TASK_LABELS[task.task_type];
+                              return (
+                                <div
+                                  key={task.task_type}
+                                  className="flex justify-between text-sm"
+                                >
+                                  <span className="text-gray-600">
+                                    {taskInfo?.icon} {taskInfo?.label}
+                                  </span>
+                                  <span className="font-medium">
+                                    {task.count}回
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+
+          <div className="bg-white rounded-lg p-4">
+            <h4 className="font-semibold text-gray-900 mb-3">
+              タスク別実施回数
+            </h4>
+            <div className="space-y-4">
+              {Object.entries(TASK_LABELS).map(([taskType, taskInfo]) => {
+                const count = taskStats[taskType] || 0;
+                const percentage =
+                  totalGames > 0 ? Math.round((count / totalGames) * 100) : 0;
+
+                return (
+                  <div key={taskType} className="border-b pb-3 last:border-b-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center">
+                        <span className="text-2xl mr-3">{taskInfo.icon}</span>
+                        <span className="font-medium text-gray-900">
+                          {taskInfo.label}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-lg font-bold text-gray-800">
+                          {count}
+                        </span>
+                        <span className="text-sm text-gray-500 ml-1">
+                          / {totalGames}試合
+                        </span>
+                      </div>
+                    </div>
+                    <div className="ml-11">
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-orange-500 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {percentage}%の試合で実施
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+

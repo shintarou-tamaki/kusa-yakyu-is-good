@@ -285,7 +285,19 @@ export default function GameDetailPage({
         .eq("game_id", gameId)
         .order("batting_order", { ascending: true });
 
-      if (!playersError) {
+      // デバッグログを追加
+      console.log("=== game_players取得結果 ===");
+      console.log("playersError:", playersError);
+      console.log("playersData:", playersData);
+      console.log("gameId:", gameId);
+      console.log("user:", user);
+
+      // エラーハンドリングを改善
+      if (playersError) {
+        console.error("参加メンバー取得エラー詳細:", playersError);
+        setGamePlayers([]); // エラーでも空配列を設定
+      } else {
+        console.log("設定するplayersData:", playersData || []);
         setGamePlayers(playersData || []);
       }
     } catch (error) {
@@ -942,7 +954,8 @@ export default function GameDetailPage({
             )}
 
           {/* スコアボックス形式の成績表示（ここに追加） */}
-          {game.status !== "scheduled" && (
+          {(game.status === "completed" ||
+            (user && game.status !== "scheduled")) && (
             <div className="bg-white rounded-lg shadow p-6 mt-6">
               <h2 className="text-xl font-bold mb-4">試合スコアボックス</h2>
               <ScoreBoxDisplay

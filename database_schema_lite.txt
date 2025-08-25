@@ -1,0 +1,35 @@
+| sort_order | section                      | content                                                            |
+| ---------- | ---------------------------- | ------------------------------------------------------------------ |
+| 0          | === DATABASE SCHEMA LITE === | null                                                               |
+| 1          | # Tables & Key Fields        | null                                                               |
+| 2          | game_attendances             | game_id, status:character varying, team_member_id                  |
+| 2          | game_batting_records         | game_id, player_id, result:character varying                       |
+| 2          | game_operation_tasks         | game_id, task_type:character varying, team_member_id               |
+| 2          | game_pitching_records        | game_id, player_id                                                 |
+| 2          | game_players                 | game_id, position:character varying, team_member_id                |
+| 2          | game_runners                 | game_id, player_id                                                 |
+| 2          | game_scores                  | game_id                                                            |
+| 2          | game_substitutions           | game_id, in_player_id, out_player_id                               |
+| 2          | games                        | category:character varying, home_team_id, status:character varying |
+| 2          | team_default_lineup          | position:character varying, team_id, team_member_id                |
+| 2          | team_join_requests           | status:character varying, team_id, user_id                         |
+| 2          | team_members                 | role:text, team_id, user_id                                        |
+| 2          | teams                        | owner_id                                                           |
+| 3          | # RLS Summary                | null                                                               |
+| 4          | game_attendances             | INSERT,SELECT,UPDATE (3 policies)                                  |
+| 4          | game_batting_records         | ALL,SELECT (2 policies)                                            |
+| 4          | game_operation_tasks         | ALL,SELECT (2 policies)                                            |
+| 4          | game_pitching_records        | ALL,SELECT (2 policies)                                            |
+| 4          | game_players                 | ALL,SELECT (3 policies)                                            |
+| 4          | game_runners                 | ALL,SELECT (2 policies)                                            |
+| 4          | game_scores                  | ALL,SELECT (2 policies)                                            |
+| 4          | game_substitutions           | ALL,SELECT (2 policies)                                            |
+| 4          | games                        | DELETE,INSERT,SELECT,UPDATE (5 policies)                           |
+| 4          | team_default_lineup          | ALL,SELECT (2 policies)                                            |
+| 4          | team_join_requests           | DELETE,INSERT,SELECT,UPDATE (4 policies)                           |
+| 4          | team_members                 | DELETE,INSERT,SELECT (3 policies)                                  |
+| 4          | teams                        | DELETE,INSERT,SELECT,UPDATE (4 policies)                           |
+| 4          | user_profiles                | INSERT,SELECT,UPDATE (3 policies)                                  |
+| 5          | # Views                      | null                                                               |
+| 6          | player_batting_stats         | Stats View                                                         |
+| 6          | player_pitching_stats        | Stats View                                                         |
