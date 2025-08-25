@@ -1,0 +1,249 @@
+=== Supabaseデータベース情報 ===
+=== 更新日: 2025年 8月20日 水曜日 11時50分55秒 JST ===
+
+=== テーブル構造 ===
+| table_name            | column_name              | data_type                   | is_nullable | column_default                 |
+| --------------------- | ------------------------ | --------------------------- | ----------- | ------------------------------ |
+| game_attendances      | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_attendances      | game_id                  | uuid                        | NO          | null                           |
+| game_attendances      | team_member_id           | uuid                        | YES         | null                           |
+| game_attendances      | status                   | character varying           | YES         | 'pending'::character varying   |
+| game_attendances      | responded_at             | timestamp with time zone    | YES         | null                           |
+| game_attendances      | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_attendances      | updated_at               | timestamp with time zone    | YES         | now()                          |
+| game_attendances      | person_name              | text                        | YES         | null                           |
+| game_batting_records  | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_batting_records  | game_id                  | uuid                        | NO          | null                           |
+| game_batting_records  | player_id                | uuid                        | NO          | null                           |
+| game_batting_records  | inning                   | integer                     | NO          | null                           |
+| game_batting_records  | batting_order            | integer                     | YES         | null                           |
+| game_batting_records  | result                   | character varying           | YES         | null                           |
+| game_batting_records  | rbi                      | integer                     | YES         | 0                              |
+| game_batting_records  | run_scored               | boolean                     | YES         | false                          |
+| game_batting_records  | stolen_base              | boolean                     | YES         | false                          |
+| game_batting_records  | notes                    | text                        | YES         | null                           |
+| game_batting_records  | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_batting_records  | base_reached             | integer                     | YES         | null                           |
+| game_batting_records  | stolen_bases_detail      | jsonb                       | YES         | '[]'::jsonb                    |
+| game_operation_tasks  | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_operation_tasks  | game_id                  | uuid                        | NO          | null                           |
+| game_operation_tasks  | task_type                | character varying           | NO          | null                           |
+| game_operation_tasks  | person_name              | text                        | NO          | null                           |
+| game_operation_tasks  | team_member_id           | uuid                        | YES         | null                           |
+| game_operation_tasks  | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_operation_tasks  | updated_at               | timestamp with time zone    | YES         | now()                          |
+| game_pitching_records | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_pitching_records | game_id                  | uuid                        | NO          | null                           |
+| game_pitching_records | player_id                | uuid                        | NO          | null                           |
+| game_pitching_records | innings_pitched          | numeric                     | YES         | null                           |
+| game_pitching_records | hits_allowed             | integer                     | YES         | 0                              |
+| game_pitching_records | runs_allowed             | integer                     | YES         | 0                              |
+| game_pitching_records | earned_runs              | integer                     | YES         | 0                              |
+| game_pitching_records | strikeouts               | integer                     | YES         | 0                              |
+| game_pitching_records | walks                    | integer                     | YES         | 0                              |
+| game_pitching_records | home_runs_allowed        | integer                     | YES         | 0                              |
+| game_pitching_records | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_players          | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_players          | game_id                  | uuid                        | NO          | null                           |
+| game_players          | player_name              | text                        | NO          | null                           |
+| game_players          | team_member_id           | uuid                        | YES         | null                           |
+| game_players          | is_starter               | boolean                     | YES         | true                           |
+| game_players          | batting_order            | integer                     | YES         | null                           |
+| game_players          | position                 | character varying           | YES         | null                           |
+| game_players          | is_active                | boolean                     | YES         | true                           |
+| game_players          | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_players          | updated_at               | timestamp with time zone    | YES         | now()                          |
+| game_runners          | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_runners          | game_id                  | uuid                        | NO          | null                           |
+| game_runners          | inning                   | integer                     | NO          | null                           |
+| game_runners          | player_id                | uuid                        | NO          | null                           |
+| game_runners          | player_name              | text                        | NO          | null                           |
+| game_runners          | current_base             | integer                     | NO          | null                           |
+| game_runners          | is_active                | boolean                     | YES         | true                           |
+| game_runners          | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_runners          | updated_at               | timestamp with time zone    | YES         | now()                          |
+| game_scores           | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_scores           | game_id                  | uuid                        | YES         | null                           |
+| game_scores           | inning                   | integer                     | NO          | null                           |
+| game_scores           | top_score                | integer                     | YES         | null                           |
+| game_scores           | bottom_score             | integer                     | YES         | null                           |
+| game_scores           | is_my_team_bat_first     | boolean                     | YES         | true                           |
+| game_scores           | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_scores           | updated_at               | timestamp with time zone    | YES         | now()                          |
+| game_substitutions    | id                       | uuid                        | NO          | gen_random_uuid()              |
+| game_substitutions    | game_id                  | uuid                        | NO          | null                           |
+| game_substitutions    | inning                   | integer                     | NO          | null                           |
+| game_substitutions    | out_player_id            | uuid                        | NO          | null                           |
+| game_substitutions    | in_player_id             | uuid                        | NO          | null                           |
+| game_substitutions    | substitution_type        | character varying           | YES         | null                           |
+| game_substitutions    | description              | text                        | YES         | null                           |
+| game_substitutions    | created_at               | timestamp with time zone    | YES         | now()                          |
+| game_substitutions    | batting_order            | integer                     | YES         | null                           |
+| game_substitutions    | new_position             | character varying           | YES         | null                           |
+| games                 | id                       | uuid                        | NO          | gen_random_uuid()              |
+| games                 | name                     | character varying           | NO          | null                           |
+| games                 | game_date                | date                        | NO          | null                           |
+| games                 | game_time                | time without time zone      | YES         | null                           |
+| games                 | location                 | text                        | YES         | null                           |
+| games                 | description              | text                        | YES         | null                           |
+| games                 | home_team_id             | uuid                        | YES         | null                           |
+| games                 | opponent_name            | character varying           | YES         | '未定'::character varying        |
+| games                 | created_by               | uuid                        | YES         | null                           |
+| games                 | status                   | character varying           | YES         | 'scheduled'::character varying |
+| games                 | home_score               | integer                     | YES         | 0                              |
+| games                 | opponent_score           | integer                     | YES         | 0                              |
+| games                 | record_type              | character varying           | YES         | 'team'::character varying      |
+| games                 | is_public                | boolean                     | YES         | true                           |
+| games                 | created_at               | timestamp with time zone    | YES         | now()                          |
+| games                 | updated_at               | timestamp with time zone    | YES         | now()                          |
+| games                 | attendance_check_enabled | boolean                     | YES         | false                          |
+| games                 | category                 | character varying           | YES         | 'practice'::character varying  |
+| player_batting_stats  | player_id                | uuid                        | YES         | null                           |
+| player_batting_stats  | player_name              | text                        | YES         | null                           |
+| player_batting_stats  | game_id                  | uuid                        | YES         | null                           |
+| player_batting_stats  | hits                     | bigint                      | YES         | null                           |
+| player_batting_stats  | home_runs                | bigint                      | YES         | null                           |
+| player_batting_stats  | doubles                  | bigint                      | YES         | null                           |
+| player_batting_stats  | triples                  | bigint                      | YES         | null                           |
+| player_batting_stats  | at_bats                  | bigint                      | YES         | null                           |
+| player_batting_stats  | walks                    | bigint                      | YES         | null                           |
+| player_batting_stats  | rbi                      | bigint                      | YES         | null                           |
+| player_batting_stats  | runs                     | bigint                      | YES         | null                           |
+| player_batting_stats  | stolen_bases             | bigint                      | YES         | null                           |
+| player_batting_stats  | batting_average          | numeric                     | YES         | null                           |
+| player_batting_stats  | on_base_percentage       | numeric                     | YES         | null                           |
+| player_batting_stats  | slugging_percentage      | numeric                     | YES         | null                           |
+| player_pitching_stats | player_id                | uuid                        | YES         | null                           |
+| player_pitching_stats | player_name              | text                        | YES         | null                           |
+| player_pitching_stats | game_id                  | uuid                        | YES         | null                           |
+| player_pitching_stats | innings_pitched          | numeric                     | YES         | null                           |
+| player_pitching_stats | hits_allowed             | integer                     | YES         | null                           |
+| player_pitching_stats | runs_allowed             | integer                     | YES         | null                           |
+| player_pitching_stats | earned_runs              | integer                     | YES         | null                           |
+| player_pitching_stats | strikeouts               | integer                     | YES         | null                           |
+| player_pitching_stats | walks                    | integer                     | YES         | null                           |
+| player_pitching_stats | home_runs_allowed        | integer                     | YES         | null                           |
+| player_pitching_stats | era                      | numeric                     | YES         | null                           |
+| player_pitching_stats | whip                     | numeric                     | YES         | null                           |
+| player_pitching_stats | k_per_nine               | numeric                     | YES         | null                           |
+| player_pitching_stats | bb_per_nine              | numeric                     | YES         | null                           |
+| team_default_lineup   | id                       | uuid                        | NO          | gen_random_uuid()              |
+| team_default_lineup   | team_id                  | uuid                        | NO          | null                           |
+| team_default_lineup   | player_name              | text                        | NO          | null                           |
+| team_default_lineup   | team_member_id           | uuid                        | YES         | null                           |
+| team_default_lineup   | batting_order            | integer                     | YES         | null                           |
+| team_default_lineup   | position                 | character varying           | YES         | null                           |
+| team_default_lineup   | is_starter               | boolean                     | YES         | true                           |
+| team_default_lineup   | created_at               | timestamp with time zone    | YES         | now()                          |
+| team_default_lineup   | updated_at               | timestamp with time zone    | YES         | now()                          |
+| team_join_requests    | id                       | uuid                        | NO          | gen_random_uuid()              |
+| team_join_requests    | team_id                  | uuid                        | YES         | null                           |
+| team_join_requests    | user_id                  | uuid                        | YES         | null                           |
+| team_join_requests    | status                   | character varying           | YES         | 'pending'::character varying   |
+| team_join_requests    | message                  | text                        | YES         | null                           |
+| team_join_requests    | requested_at             | timestamp with time zone    | YES         | now()                          |
+| team_join_requests    | responded_at             | timestamp with time zone    | YES         | null                           |
+| team_join_requests    | responded_by             | uuid                        | YES         | null                           |
+| team_members          | id                       | uuid                        | NO          | uuid_generate_v4()             |
+| team_members          | team_id                  | uuid                        | YES         | null                           |
+| team_members          | user_id                  | uuid                        | YES         | null                           |
+| team_members          | role                     | text                        | YES         | 'player'::text                 |
+| team_members          | joined_at                | timestamp without time zone | YES         | now()                          |
+| teams                 | id                       | uuid                        | NO          | gen_random_uuid()              |
+| teams                 | name                     | character varying           | NO          | null                           |
+| teams                 | description              | text                        | YES         | null                           |
+| teams                 | owner_id                 | uuid                        | YES         | null                           |
+| teams                 | members                  | ARRAY                       | YES         | ARRAY[]::uuid[]                |
+| teams                 | created_at               | timestamp with time zone    | YES         | now()                          |
+| teams                 | updated_at               | timestamp with time zone    | YES         | now()                          |
+| teams                 | prefecture               | character varying           | YES         | null                           |
+| teams                 | city                     | character varying           | YES         | null                           |
+| user_profiles         | id                       | uuid                        | NO          | null                           |
+| user_profiles         | display_name             | text                        | YES         | 'ユーザー'::text                   |
+| user_profiles         | avatar_url               | text                        | YES         | null                           |
+| user_profiles         | provider                 | text                        | YES         | null                           |
+| user_profiles         | created_at               | timestamp without time zone | YES         | now()                          |
+| user_profiles         | updated_at               | timestamp without time zone | YES         | now()                          |
+
+
+=== RLSポリシー ===| tablename             | policyname                             | cmd    | condition                                                                                                                                                                                                                                                   |
+| --------------------- | -------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| game_attendances      | Members can update own attendance      | UPDATE | (team_member_id IN ( SELECT team_members.id
+   FROM team_members
+  WHERE (team_members.user_id = auth.uid())))                                                                                                                                              |
+| game_attendances      | Team members can create attendance     | INSERT | null                                                                                                                                                                                                                                                        |
+| game_attendances      | Team members can view attendances      | SELECT | (game_id IN ( SELECT g.id
+   FROM (games g
+     JOIN team_members tm ON ((g.home_team_id = tm.team_id)))
+  WHERE (tm.user_id = auth.uid())))                                                                                                                |
+| game_batting_records  | batting_records_all_policy             | ALL    | (game_id IN ( SELECT g.id
+   FROM ((games g
+     LEFT JOIN teams t ON ((g.home_team_id = t.id)))
+     LEFT JOIN team_members tm ON ((t.id = tm.team_id)))
+  WHERE ((g.created_by = auth.uid()) OR (t.owner_id = auth.uid()) OR (tm.user_id = auth.uid())))) |
+| game_batting_records  | batting_records_select_policy          | SELECT | true                                                                                                                                                                                                                                                        |
+| game_operation_tasks  | チームメンバーは運営タスクを管理可能                     | ALL    | (EXISTS ( SELECT 1
+   FROM (games g
+     JOIN team_members tm ON ((tm.team_id = g.home_team_id)))
+  WHERE ((g.id = game_operation_tasks.game_id) AND (tm.user_id = auth.uid()))))                                                                           |
+| game_operation_tasks  | 誰でも運営タスクを閲覧可能                          | SELECT | true                                                                                                                                                                                                                                                        |
+| game_pitching_records | pitching_records_all_policy            | ALL    | (game_id IN ( SELECT g.id
+   FROM ((games g
+     LEFT JOIN teams t ON ((g.home_team_id = t.id)))
+     LEFT JOIN team_members tm ON ((t.id = tm.team_id)))
+  WHERE ((g.created_by = auth.uid()) OR (t.owner_id = auth.uid()) OR (tm.user_id = auth.uid())))) |
+| game_pitching_records | pitching_records_select_policy         | SELECT | true                                                                                                                                                                                                                                                        |
+| game_players          | game_players_all_policy                | ALL    | (game_id IN ( SELECT g.id
+   FROM ((games g
+     LEFT JOIN teams t ON ((g.home_team_id = t.id)))
+     LEFT JOIN team_members tm ON ((t.id = tm.team_id)))
+  WHERE ((g.created_by = auth.uid()) OR (t.owner_id = auth.uid()) OR (tm.user_id = auth.uid())))) |
+| game_players          | game_players_select_policy             | SELECT | true                                                                                                                                                                                                                                                        |
+| game_runners          | game_runners_modify_policy             | ALL    | (EXISTS ( SELECT 1
+   FROM (games g
+     JOIN team_members tm ON ((tm.team_id = g.home_team_id)))
+  WHERE ((g.id = game_runners.game_id) AND (tm.user_id = auth.uid()))))                                                                                   |
+| game_runners          | game_runners_select_policy             | SELECT | true                                                                                                                                                                                                                                                        |
+| game_scores           | Game owners can manage scores          | ALL    | (game_id IN ( SELECT games.id
+   FROM games
+  WHERE ((games.created_by = auth.uid()) OR (games.home_team_id IN ( SELECT teams.id
+           FROM teams
+          WHERE (teams.owner_id = auth.uid()))))))                                                   |
+| game_scores           | Game scores are viewable by everyone   | SELECT | true                                                                                                                                                                                                                                                        |
+| game_substitutions    | substitutions_all_policy               | ALL    | (game_id IN ( SELECT g.id
+   FROM ((games g
+     LEFT JOIN teams t ON ((g.home_team_id = t.id)))
+     LEFT JOIN team_members tm ON ((t.id = tm.team_id)))
+  WHERE ((g.created_by = auth.uid()) OR (t.owner_id = auth.uid()) OR (tm.user_id = auth.uid())))) |
+| game_substitutions    | substitutions_select_policy            | SELECT | true                                                                                                                                                                                                                                                        |
+| games                 | Authenticated users can create games   | INSERT | null                                                                                                                                                                                                                                                        |
+| games                 | Public games are viewable by everyone  | SELECT | (is_public = true)                                                                                                                                                                                                                                          |
+| games                 | Users can delete their own games       | DELETE | (created_by = auth.uid())                                                                                                                                                                                                                                   |
+| games                 | Users can update their own games       | UPDATE | (created_by = auth.uid())                                                                                                                                                                                                                                   |
+| games                 | Users can view their own games         | SELECT | (created_by = auth.uid())                                                                                                                                                                                                                                   |
+| team_default_lineup   | Team members can manage default lineup | ALL    | (team_id IN ( SELECT t.id
+   FROM (teams t
+     LEFT JOIN team_members tm ON ((t.id = tm.team_id)))
+  WHERE ((t.owner_id = auth.uid()) OR (tm.user_id = auth.uid()))))                                                                                      |
+| team_default_lineup   | Team members can view default lineup   | SELECT | (team_id IN ( SELECT t.id
+   FROM (teams t
+     LEFT JOIN team_members tm ON ((t.id = tm.team_id)))
+  WHERE ((t.owner_id = auth.uid()) OR (tm.user_id = auth.uid()))))                                                                                      |
+| team_join_requests    | Anyone can create join requests        | INSERT | null                                                                                                                                                                                                                                                        |
+| team_join_requests    | Delete own pending requests            | DELETE | ((user_id = auth.uid()) AND ((status)::text = 'pending'::text))                                                                                                                                                                                             |
+| team_join_requests    | Team owners update requests            | UPDATE | (EXISTS ( SELECT 1
+   FROM teams
+  WHERE ((teams.id = team_join_requests.team_id) AND (teams.owner_id = auth.uid()))))                                                                                                                                      |
+| team_join_requests    | View own requests or team requests     | SELECT | ((user_id = auth.uid()) OR (team_id IN ( SELECT teams.id
+   FROM teams
+  WHERE (teams.owner_id = auth.uid()))))                                                                                                                                             |
+| team_members          | Anyone can view members                | SELECT | true                                                                                                                                                                                                                                                        |
+| team_members          | Members can leave teams                | DELETE | (user_id = auth.uid())                                                                                                                                                                                                                                      |
+| team_members          | Team owners add members                | INSERT | null                                                                                                                                                                                                                                                        |
+| teams                 | Anyone can view teams                  | SELECT | true                                                                                                                                                                                                                                                        |
+| teams                 | Authenticated users can create teams   | INSERT | null                                                                                                                                                                                                                                                        |
+| teams                 | Owners can delete their teams          | DELETE | (auth.uid() = owner_id)                                                                                                                                                                                                                                     |
+| teams                 | Owners can update their teams          | UPDATE | (auth.uid() = owner_id)                                                                                                                                                                                                                                     |
+| user_profiles         | allow_create_own_profile               | INSERT | null                                                                                                                                                                                                                                                        |
+| user_profiles         | allow_read_profiles                    | SELECT | true                                                                                                                                                                                                                                                        |
+| user_profiles         | allow_update_own_profile               | UPDATE | (auth.uid() = id)                                                                                                                                                                                                                                           |
