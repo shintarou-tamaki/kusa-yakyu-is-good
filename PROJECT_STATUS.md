@@ -126,6 +126,29 @@
 - [x] **database_schema_lite.txt 導入（2025-08-25 追加）**
   - 軽量版 DB 構造（自動生成 SQL 使用）
 
+  ### 試合スコアボックス統合編集機能（2025-08-26 実装中）
+
+- [x] **フェーズ1: 基盤実装（完了）**
+  - ScoreBoxDisplay守備位置セレクトボックス化
+  - 打撃結果セレクトボックス化  
+  - 詳細入力モード切替機能
+  - game-logic.ts作成（共通ロジック抽出）
+    - advanceRunners（ランナー進塁）
+    - calculateBaseReached（到達塁計算）
+    - isOutResult（アウト判定）
+
+- [ ] **フェーズ2: 統合実装（進行中）**
+  - BattingInputModalコンポーネント作成
+  - saveBattingWithIntegrity実装
+  - データ整合性維持機能
+  - ランナー管理連動
+
+- [ ] **フェーズ3: 完成（予定）**
+  - 併殺処理連動
+  - 得点・打点自動計算
+  - リアルタイム更新
+  - GameProgressPageとの互換性維持
+
 ## 現在の不具合
 
 なし
@@ -306,6 +329,14 @@
 - UI 上では色分けされたバッジで表示
 - 検索・絞り込み機能での利用を想定
 - 全ページ（作成、編集、詳細、一覧、検索）で実装完了
+
+### ScoreBoxDisplay統合設計（2025-08-26 追加）
+
+- 試合詳細ページで完結する入力システム
+- game-logic.tsによる共通ロジック管理
+- 簡易編集モード（既存）と詳細入力モード（新規）の切替
+- game_batting_records、game_runners、gamesテーブルの整合性自動維持
+- GameProgressPageとの機能互換性を保持
 
 ## 開発環境
 

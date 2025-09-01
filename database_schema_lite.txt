@@ -17,9 +17,9 @@
 | 2          | teams                        | owner_id                                                           |
 | 3          | # RLS Summary                | null                                                               |
 | 4          | game_attendances             | INSERT,SELECT,UPDATE (3 policies)                                  |
-| 4          | game_batting_records         | ALL,SELECT (2 policies)                                            |
+| 4          | game_batting_records         | ALL,SELECT (3 policies)                                            |
 | 4          | game_operation_tasks         | ALL,SELECT (2 policies)                                            |
-| 4          | game_pitching_records        | ALL,SELECT (2 policies)                                            |
+| 4          | game_pitching_records        | ALL,SELECT (3 policies)                                            |
 | 4          | game_players                 | ALL,SELECT (3 policies)                                            |
 | 4          | game_runners                 | ALL,SELECT (2 policies)                                            |
 | 4          | game_scores                  | ALL,SELECT (2 policies)                                            |

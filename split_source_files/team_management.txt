@@ -1,5 +1,5 @@
 # チーム管理機能 Source Code
-Generated at: 2025-08-25
+Generated at: 2025-09-01
 File count: 5 files
 Purpose: Team management and related features
 

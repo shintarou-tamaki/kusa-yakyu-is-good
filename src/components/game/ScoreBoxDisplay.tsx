@@ -101,6 +101,17 @@ const BATTING_RESULTS = [
   { value: "フィールダースチョイス", label: "野選" },
 ];
 
+// 入力モードタイプ
+type InputMode = 'view' | 'simple' | 'detailed';
+
+// 詳細入力用の型定義
+interface DetailedInputData {
+  playerId: string;
+  playerName: string;
+  inning: number;
+  existingRecord?: BattingRecord;
+}
+
 // 打撃結果のスタイリング
 const getResultStyle = (result: string, notes?: string): string => {
   if (
@@ -189,6 +200,41 @@ export default function ScoreBoxDisplay({
   const [editingCell, setEditingCell] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [loading, setLoading] = useState(true);
+  // 入力モード管理
+const [inputMode, setInputMode] = useState<InputMode>('simple');
+const [showDetailedInput, setShowDetailedInput] = useState(false);
+const [detailedInputData, setDetailedInputData] = useState<DetailedInputData | null>(null);
+
+// 詳細入力モーダルを開く
+const openDetailedInput = (playerId: string, inning: number) => {
+  const player = players.find(p => p.id === playerId);
+  const existingRecord = battingRecords.find(
+    r => r.player_id === playerId && r.inning === inning
+  );
+  
+  setDetailedInputData({
+    playerId,
+    playerName: player?.player_name || "",
+    inning,
+    existingRecord
+  });
+  setShowDetailedInput(true);
+};
+
+// 打撃結果保存（整合性維持付き）- 今は空実装
+const saveBattingWithIntegrity = async (
+  playerId: string,
+  inning: number,
+  result: string,
+  rbi: number,
+  baseReached: number
+) => {
+  // TODO: 後で実装
+  // 1. 打撃記録を保存
+  // 2. ランナー管理を更新
+  // 3. 得点を自動計算
+  // 4. UIを更新
+};
 
   useEffect(() => {
     fetchData();
@@ -299,6 +345,8 @@ export default function ScoreBoxDisplay({
     }
   };
 
+
+
   // saveEdit関数 - 守備位置保存に対応
   const saveEdit = async () => {
     if (!editingCell) return;
@@ -391,9 +439,19 @@ export default function ScoreBoxDisplay({
     <div className="space-y-6">
       {/* 打撃成績表 */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="bg-gray-100 px-4 py-2 border-b">
-          <h3 className="font-bold text-lg">打撃成績</h3>
-        </div>
+        <div className="bg-gray-100 px-4 py-2 border-b flex justify-between items-center">
+  <h3 className="font-bold text-lg">打撃成績</h3>
+  {isEditable && (
+    <div className="flex gap-2">
+      <button
+        onClick={() => setInputMode(inputMode === 'detailed' ? 'simple' : 'detailed')}
+        className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+      >
+        {inputMode === 'detailed' ? '簡易編集' : '詳細入力'}
+      </button>
+    </div>
+  )}
+</div>
         <div className="overflow-x-auto">
           <table className="min-w-full">
             <thead>
@@ -496,13 +554,13 @@ export default function ScoreBoxDisplay({
                             ? getResultStyle(record.result, record.notes)
                             : ""
                         }`}
-                        onClick={() =>
-                          handleCellEdit(
-                            boxScore.player.id,
-                            inning + 1,
-                            "result"
-                          )
-                        }
+                        onClick={() => {
+  if (inputMode === 'detailed') {
+    openDetailedInput(boxScore.player.id, inning + 1);
+  } else {
+    handleCellEdit(boxScore.player.id, inning + 1, "result");
+  }
+}}
                       >
                         {isEditing ? (
   <select

@@ -1,5 +1,5 @@
 # Source Files Summary
-Generated at: 2025-08-25
+Generated at: 2025-09-01
 
 ## File Distribution
 
@@ -65,7 +65,7 @@ Generated at: 2025-08-25
 
 ### UI・共有コンポーネント (ui_and_shared.txt)
 - Description: UI components and shared utilities
-- File count: 18
+- File count: 19
 - Files:
   - src/app/games/[gameId]/edit/page.tsx
   - src/app/games/[gameId]/operations/page.tsx
@@ -83,6 +83,7 @@ Generated at: 2025-08-25
   - src/components/ui/input.tsx
   - src/components/ui/label.tsx
   - src/components/ui/select.tsx
+  - src/lib/game-logic.ts
   - src/lib/japanData.ts
   - src/lib/utils.ts
 
