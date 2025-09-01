@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import BattingInputModal from "@/components/game/BattingInputModal";
 
 interface GamePlayer {
   id: string;
@@ -174,6 +175,13 @@ const getShortResult = (
   return shortResult + rbiText;
 };
 
+// エラー数の自動集計
+const calculateErrors = (battingRecords: BattingRecord[]): number => {
+  return battingRecords.filter(record => 
+    record.notes?.includes("失策")
+  ).length;
+};
+
 // 投球回の表示形式変換
 const formatInningsPitched = (innings: number): string => {
   const wholeInnings = Math.floor(innings);
@@ -204,6 +212,228 @@ export default function ScoreBoxDisplay({
 const [inputMode, setInputMode] = useState<InputMode>('simple');
 const [showDetailedInput, setShowDetailedInput] = useState(false);
 const [detailedInputData, setDetailedInputData] = useState<DetailedInputData | null>(null);
+// 既存のstate定義の後に追加
+const [showPlayerAddModal, setShowPlayerAddModal] = useState(false);
+const [editingPlayer, setEditingPlayer] = useState<GamePlayer | null>(null);
+const [teamMembers, setTeamMembers] = useState<any[]>([]);
+
+// ScoreBoxDisplay内に追加
+const PlayerEditModal = () => {
+  const [localPlayer, setLocalPlayer] = useState<Partial<GamePlayer>>(
+    editingPlayer || { batting_order: players.length + 1 }
+  );
+  const [inputMode, setInputMode] = useState<"select" | "text">("select");
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <h3 className="text-lg font-bold mb-4">
+          {editingPlayer ? "選手編集" : "選手追加"}
+        </h3>
+
+        {/* 打順 */}
+        {editingPlayer && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium mb-2">打順</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={localPlayer.batting_order || ""}
+              className="w-full p-2 border rounded"
+              disabled
+            />
+          </div>
+        )}
+
+        {/* 選手名入力 */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">選手名</label>
+          <div className="flex gap-2 mb-2">
+            <button
+              onClick={() => setInputMode("select")}
+              className={`px-3 py-1 rounded ${
+                inputMode === "select" 
+                  ? "bg-blue-600 text-white" 
+                  : "bg-gray-200"
+              }`}
+            >
+              メンバー選択
+            </button>
+            <button
+              onClick={() => setInputMode("text")}
+              className={`px-3 py-1 rounded ${
+                inputMode === "text" 
+                  ? "bg-blue-600 text-white" 
+                  : "bg-gray-200"
+              }`}
+            >
+              直接入力
+            </button>
+          </div>
+
+          {inputMode === "select" ? (
+            <select
+              value={localPlayer.team_member_id || ""}
+              onChange={(e) => {
+                const memberId = e.target.value;
+                const member = teamMembers.find(m => m.id === memberId);
+                setLocalPlayer({
+                  ...localPlayer,
+                  team_member_id: memberId,
+                  player_name: member?.user_profiles?.display_name || "",
+                });
+              }}
+              className="w-full p-2 border rounded"
+            >
+              <option value="">選択してください</option>
+              {teamMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.user_profiles?.display_name || "名前未設定"}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={localPlayer.player_name || ""}
+              onChange={(e) => setLocalPlayer({
+                ...localPlayer,
+                player_name: e.target.value,
+                team_member_id: null,
+              })}
+              placeholder="選手名を入力"
+              className="w-full p-2 border rounded"
+            />
+          )}
+        </div>
+
+        {/* 守備位置 */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-2">守備位置</label>
+          <select
+            value={localPlayer.position || ""}
+            onChange={(e) => setLocalPlayer({
+              ...localPlayer,
+              position: e.target.value,
+            })}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">選択してください</option>
+            <option value="pitcher">投手</option>
+            <option value="catcher">捕手</option>
+            <option value="first">一塁手</option>
+            <option value="second">二塁手</option>
+            <option value="third">三塁手</option>
+            <option value="shortstop">遊撃手</option>
+            <option value="left">左翼手</option>
+            <option value="center">中堅手</option>
+            <option value="right">右翼手</option>
+            <option value="dh">指名打者</option>
+          </select>
+        </div>
+
+        {/* ボタン */}
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => {
+              setEditingPlayer(null);
+              setShowPlayerAddModal(false);
+            }}
+            className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={() => savePlayer(localPlayer)}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            disabled={!localPlayer.player_name}
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// チームメンバー取得関数
+const fetchTeamMembers = async () => {
+  const { data: gameData } = await supabase
+    .from("games")
+    .select("home_team_id")
+    .eq("id", gameId)
+    .single();
+
+  if (gameData?.home_team_id) {
+    const { data: members } = await supabase
+      .from("team_members")
+      .select(`
+        id,
+        user_id,
+        user_profiles (
+          display_name
+        )
+      `)
+      .eq("team_id", gameData.home_team_id);
+
+    if (members) {
+      setTeamMembers(members);
+    }
+  }
+};
+
+// 選手保存関数
+const savePlayer = async (playerData: Partial<GamePlayer>) => {
+  try {
+    if (playerData.id?.startsWith("temp-")) {
+      // 新規作成
+      const { data, error } = await supabase
+        .from("game_players")
+        .insert([{
+          game_id: gameId,
+          player_name: playerData.player_name,
+          batting_order: playerData.batting_order,
+          position: playerData.position,
+          team_member_id: playerData.team_member_id,
+          is_starter: true,
+          is_active: true,
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      // tempプレーヤーを実際のデータで置き換え
+      setPlayers(prev => prev.map(p => 
+        p.id === playerData.id ? data : p
+      ));
+    } else {
+      // 既存更新
+      const { error } = await supabase
+        .from("game_players")
+        .update({
+          player_name: playerData.player_name,
+          position: playerData.position,
+          team_member_id: playerData.team_member_id,
+        })
+        .eq("id", playerData.id);
+
+      if (error) throw error;
+
+      setPlayers(prev => prev.map(p => 
+        p.id === playerData.id ? { ...p, ...playerData } : p
+      ));
+    }
+
+    setEditingPlayer(null);
+    setShowPlayerAddModal(false);
+    await fetchData();
+  } catch (error) {
+    console.error("選手保存エラー:", error);
+    alert("選手の保存に失敗しました");
+  }
+};
 
 // 詳細入力モーダルを開く
 const openDetailedInput = (playerId: string, inning: number) => {
@@ -221,23 +451,354 @@ const openDetailedInput = (playerId: string, inning: number) => {
   setShowDetailedInput(true);
 };
 
-// 打撃結果保存（整合性維持付き）- 今は空実装
+// 打撃結果保存（整合性維持付き）
 const saveBattingWithIntegrity = async (
   playerId: string,
   inning: number,
   result: string,
   rbi: number,
-  baseReached: number
+  baseReached: number,
+  runScored: boolean = false,
+  stolenBase: boolean = false,
+  notes: string = ""
 ) => {
-  // TODO: 後で実装
-  // 1. 打撃記録を保存
-  // 2. ランナー管理を更新
-  // 3. 得点を自動計算
-  // 4. UIを更新
+  try {
+    // 既存レコードの確認
+    const existingRecord = battingRecords.find(
+      (r) => r.player_id === playerId && r.inning === inning
+    );
+
+    const battingData = {
+      game_id: gameId,
+      player_id: playerId,
+      inning,
+      result,
+      rbi,
+      run_scored: runScored,
+      stolen_base: stolenBase,
+      base_reached: baseReached,
+      notes: notes || null,
+    };
+
+    if (existingRecord) {
+      // 更新処理
+      await supabase
+        .from("game_batting_records")
+        .update(battingData)
+        .eq("id", existingRecord.id);
+    } else {
+      // 新規作成
+      await supabase
+        .from("game_batting_records")
+        .insert([battingData]);
+    }
+
+    // ランナー管理（アウトでない場合）
+    const { isOutResult } = await import("@/lib/game-logic");
+    
+    if (!isOutResult(result) || notes.includes("失策")) {
+      // 既存ランナーの進塁処理
+      const { advanceRunners } = await import("@/lib/game-logic");
+      await advanceRunners(supabase, gameId, inning, baseReached);
+
+      // 打者をランナーとして追加（ホームイン以外）
+      if (baseReached > 0 && baseReached < 4) {
+        // 既存の同じ選手のランナー記録を削除
+        await supabase
+          .from("game_runners")
+          .delete()
+          .eq("game_id", gameId)
+          .eq("player_id", playerId)
+          .eq("inning", inning);
+
+        // 新しいランナーとして追加
+        const player = players.find(p => p.id === playerId);
+        await supabase
+          .from("game_runners")
+          .insert([{
+            game_id: gameId,
+            player_id: playerId,
+            player_name: player?.player_name || "",
+            inning,
+            current_base: baseReached,
+            is_active: true,
+          }]);
+      }
+    }
+
+    // 得点の更新
+    await updateGameScore();
+    
+    // データ再取得
+    await fetchData();
+    
+    return true;
+  } catch (error) {
+    console.error("保存エラー:", error);
+    return false;
+  }
+};
+
+// 打点の自動計算
+const calculateAutoRbi = async (
+  result: string,
+  inning: number
+): Promise<number> => {
+  if (!["安打", "二塁打", "三塁打", "本塁打", "犠飛"].includes(result)) {
+    return 0;
+  }
+
+  // 現在のランナーで得点圏（2塁・3塁）にいる人数を取得
+  const { data: runners } = await supabase
+    .from("game_runners")
+    .select("*")
+    .eq("game_id", gameId)
+    .eq("inning", inning)
+    .eq("is_active", true)
+    .in("current_base", [2, 3]);
+
+  const scoringPositionRunners = runners?.length || 0;
+
+  // 打撃結果に応じた打点計算
+  switch (result) {
+    case "本塁打":
+      // 本塁打は全ランナー+打者
+      const { data: allRunners } = await supabase
+        .from("game_runners")
+        .select("*")
+        .eq("game_id", gameId)
+        .eq("inning", inning)
+        .eq("is_active", true);
+      return (allRunners?.length || 0) + 1;
+    
+    case "三塁打":
+      // 三塁打は全ランナーがホームイン
+      const { data: allRunnersForTriple } = await supabase
+        .from("game_runners")
+        .select("*")
+        .eq("game_id", gameId)
+        .eq("inning", inning)
+        .eq("is_active", true);
+      return allRunnersForTriple?.length || 0;
+    
+    case "二塁打":
+      // 二塁打は2塁・3塁のランナーがホームイン
+      return scoringPositionRunners;
+    
+    case "安打":
+    case "犠飛":
+      // 安打・犠飛は3塁ランナーのみホームイン
+      const { data: thirdBaseRunner } = await supabase
+        .from("game_runners")
+        .select("*")
+        .eq("game_id", gameId)
+        .eq("inning", inning)
+        .eq("is_active", true)
+        .eq("current_base", 3);
+      return thirdBaseRunner ? 1 : 0;
+    
+    default:
+      return 0;
+  }
+};
+
+// 得点の自動計算と反映
+const updateTeamScores = async () => {
+  try {
+    // 各イニングの得点を集計
+    const { data: allRecords } = await supabase
+      .from("game_batting_records")
+      .select("*")
+      .eq("game_id", gameId);
+
+    if (!allRecords) return;
+
+    // イニング毎の得点を計算
+    const inningScores = new Map<number, number>();
+    
+    for (const record of allRecords) {
+      if (record.run_scored) {
+        const currentScore = inningScores.get(record.inning) || 0;
+        inningScores.set(record.inning, currentScore + 1);
+      }
+    }
+
+    // game_scoresテーブルを更新
+    for (const [inning, runs] of inningScores) {
+      await supabase
+        .from("game_scores")
+        .upsert({
+          game_id: gameId,
+          inning,
+          top_score: runs, // TODO: 先攻/後攻の判定
+          bottom_score: 0,
+          is_my_team_bat_first: true, // TODO: 実際の値を取得
+        }, {
+          onConflict: "game_id,inning"
+        });
+    }
+
+    // 合計得点を計算してgamesテーブルを更新
+    const totalRuns = Array.from(inningScores.values()).reduce((sum, runs) => sum + runs, 0);
+    
+    await supabase
+      .from("games")
+      .update({
+        home_score: totalRuns,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", gameId);
+      
+  } catch (error) {
+    console.error("得点更新エラー:", error);
+  }
+};
+
+// GameProgressPageとの互換性を保つための関数
+// GameProgressPageとの互換性を保つための関数
+const ensureCompatibility = async (
+  playerId: string,
+  inning: number,
+  result: string
+) => {
+  // batting_orderの確認と設定
+  const player = players.find(p => p.id === playerId);
+  if (player && !player.batting_order) {
+    // 打順が設定されていない場合は自動設定
+    const maxOrder = Math.max(...players.map(p => p.batting_order || 0));
+    await supabase
+      .from("game_players")
+      .update({ batting_order: maxOrder + 1 })
+      .eq("id", playerId);
+  }
+
+  // アウトカウントの同期
+  const { data: inningRecords } = await supabase
+    .from("game_batting_records")
+    .select("*")
+    .eq("game_id", gameId)
+    .eq("inning", inning);
+
+  // importを関数の最初に移動
+  const { isOutResult } = await import("@/lib/game-logic");
+  
+  let outs = 0;
+  if (inningRecords) {
+    // forEachをfor...ofループに変更
+    for (const record of inningRecords) {
+      if (isOutResult(record.result)) {
+        if (record.notes?.includes("併殺")) {
+          outs += 2;
+        } else if (record.notes?.includes("三重殺")) {
+          outs += 3;
+        } else {
+          outs += 1;
+        }
+      }
+    }
+  }
+
+  // 3アウトで自動的にイニング終了処理
+  if (outs >= 3) {
+    // 全ランナーを非アクティブ化
+    await supabase
+      .from("game_runners")
+      .update({ is_active: false })
+      .eq("game_id", gameId)
+      .eq("inning", inning);
+  }
+};
+
+// ゲームスコアの更新
+const updateGameScore = async () => {
+  try {
+    // 全イニングの得点を集計
+    const { data: allScores } = await supabase
+      .from("game_scores")
+      .select("*")
+      .eq("game_id", gameId);
+
+    if (allScores) {
+      const homeTotal = allScores.reduce((sum, s) => sum + (s.top_score || 0), 0);
+      const opponentTotal = allScores.reduce((sum, s) => sum + (s.bottom_score || 0), 0);
+
+      await supabase
+        .from("games")
+        .update({
+          home_score: homeTotal,
+          opponent_score: opponentTotal,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", gameId);
+    }
+  } catch (error) {
+    console.error("スコア更新エラー:", error);
+  }
 };
 
   useEffect(() => {
-    fetchData();
+  fetchData();
+  fetchTeamMembers(); // チームメンバー取得を追加
+  
+  // リアルタイム更新のサブスクリプション設定
+    const battingSubscription = supabase
+      .channel(`batting_records_${gameId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_batting_records',
+          filter: `game_id=eq.${gameId}`
+        },
+        (payload) => {
+          console.log('打撃記録更新:', payload);
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    const runnersSubscription = supabase
+      .channel(`runners_${gameId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_runners',
+          filter: `game_id=eq.${gameId}`
+        },
+        (payload) => {
+          console.log('ランナー更新:', payload);
+          fetchData();
+        }
+      )
+      .subscribe();
+      
+    const scoresSubscription = supabase
+      .channel(`scores_${gameId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_scores',
+          filter: `game_id=eq.${gameId}`
+        },
+        (payload) => {
+          console.log('スコア更新:', payload);
+          // スコアが更新されたら画面を更新
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    // クリーンアップ
+    return () => {
+      battingSubscription.unsubscribe();
+      runnersSubscription.unsubscribe();
+      scoresSubscription.unsubscribe();
+    };
   }, [gameId]);
 
   const fetchData = async () => {
@@ -251,8 +812,21 @@ const saveBattingWithIntegrity = async (
         .eq("game_id", gameId)
         .order("batting_order", { ascending: true });
 
-      if (playersData) {
+      if (playersData && playersData.length > 0) {
         setPlayers(playersData);
+      } else {
+        // データがない場合は空の9人分のスロットを作成
+        const emptyPlayers: GamePlayer[] = [];
+        for (let i = 1; i <= 9; i++) {
+          emptyPlayers.push({
+            id: `temp-${i}`,
+            player_name: "",
+            batting_order: i,
+            position: "",
+            team_member_id: null,
+          });
+        }
+        setPlayers(emptyPlayers);
       }
 
       // 打撃記録取得
@@ -289,11 +863,16 @@ const saveBattingWithIntegrity = async (
     }
   };
 
-  const generateBoxScores = (
+const generateBoxScores = (
     playersData: GamePlayer[],
     battingData: BattingRecord[]
   ) => {
-    const scores: PlayerBattingBoxScore[] = playersData
+    // 空の選手データも含めて処理
+    const processedPlayers = playersData.length > 0 
+      ? playersData 
+      : players; // 既にセットされた空の選手データを使用
+      
+    const scores: PlayerBattingBoxScore[] = processedPlayers
       .filter((p) => p.batting_order !== null)
       .sort((a, b) => (a.batting_order || 0) - (b.batting_order || 0))
       .map((player) => {
@@ -307,7 +886,7 @@ const saveBattingWithIntegrity = async (
           totalRbi: playerRecords.reduce((sum, r) => sum + r.rbi, 0),
           totalRuns: playerRecords.filter((r) => r.run_scored).length,
           totalStolenBases: playerRecords.filter((r) => r.stolen_base).length,
-          totalErrors: 0, // エラー数は別途計算が必要
+          totalErrors: calculateErrors(playerRecords), // エラー数を自動計算
         };
       });
 
@@ -534,9 +1113,27 @@ const saveBattingWithIntegrity = async (
                       boxScore.player.position ? (POSITION_MAP[boxScore.player.position] || boxScore.player.position) : "-"
                     )}
                   </td>
-                  <td className="px-3 py-2 text-sm font-medium">
-                    {boxScore.player.player_name}
-                  </td>
+                  <td 
+  className={`px-3 py-2 text-sm font-medium ${
+    !boxScore.player.player_name && isEditable 
+      ? "cursor-pointer hover:bg-gray-100" 
+      : ""
+  }`}
+  onClick={() => {
+    if (isEditable && !boxScore.player.player_name) {
+      setEditingPlayer(boxScore.player);
+      setShowPlayerAddModal(true);
+    }
+  }}
+>
+  {boxScore.player.player_name || (
+    isEditable ? (
+      <span className="text-gray-400">クリックして選手追加</span>
+    ) : (
+      "-"
+    )
+  )}
+</td>
                   {[...Array(maxInnings)].map((_, inning) => {
                     const record = boxScore.battingRecords.find(
                       (r) => r.inning === inning + 1
@@ -773,6 +1370,25 @@ const saveBattingWithIntegrity = async (
           </p>
         </div>
       )}
+
+      {/* 詳細入力モーダル */}
+      {showDetailedInput && detailedInputData && (
+        <BattingInputModal
+          gameId={gameId}
+          playerId={detailedInputData.playerId}
+          playerName={detailedInputData.playerName}
+          inning={detailedInputData.inning}
+          existingRecord={detailedInputData.existingRecord}
+          onClose={() => {
+            setShowDetailedInput(false);
+            setDetailedInputData(null);
+          }}
+          onSave={fetchData}
+        />
+      )}
+      
+      {/* 選手追加/編集モーダル */}
+      {showPlayerAddModal && <PlayerEditModal />}
     </div>
   );
 }

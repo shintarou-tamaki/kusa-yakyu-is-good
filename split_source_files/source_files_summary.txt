@@ -24,8 +24,9 @@ Generated at: 2025-09-01
 
 ### 試合詳細機能 (game_advanced.txt)
 - Description: Advanced game features including progress, players, attendance
-- File count: 10
+- File count: 11
 - Files:
+  - src/components/game/BattingInputModal.tsx
   - src/components/game/BattingRecordInput.tsx
   - src/components/game/DoublePlaySelector.tsx
   - src/components/game/InlineScoreInput.tsx
