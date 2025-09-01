@@ -1914,7 +1914,8 @@ export default function GameDetailPage({
             )}
 
           {}
-          {game.status !== "scheduled" && (
+          {(game.status === "completed" ||
+            (user && game.status !== "scheduled")) && (
             <div className="bg-white rounded-lg shadow p-6 mt-6">
               <h2 className="text-xl font-bold mb-4">試合スコアボックス</h2>
               <ScoreBoxDisplay

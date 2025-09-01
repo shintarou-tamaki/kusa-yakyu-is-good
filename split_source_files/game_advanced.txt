@@ -3189,6 +3189,7 @@ interface Props {
 }
 
 const POSITION_MAP: Record<string, string> = {
+
   pitcher: "投",
   catcher: "捕",
   first: "一",
@@ -3199,6 +3200,17 @@ const POSITION_MAP: Record<string, string> = {
   center: "中",
   right: "右",
   dh: "DH",
+
+  "投手": "投",
+  "捕手": "捕",
+  "一塁手": "一",
+  "二塁手": "二",
+  "三塁手": "三",
+  "遊撃手": "遊",
+  "左翼手": "左",
+  "中堅手": "中",
+  "右翼手": "右",
+  "指名打者": "DH",
 };
 
 const getResultStyle = (result: string, notes?: string): string => {
@@ -3509,8 +3521,8 @@ export default function ScoreBoxDisplay({
                     {boxScore.player.batting_order}
                   </td>
                   <td className="px-2 py-2 text-center text-sm">
-                    {POSITION_MAP[boxScore.player.position || ""] || ""}
-                  </td>
+  {boxScore.player.position ? (POSITION_MAP[boxScore.player.position] || boxScore.player.position) : "-"}
+</td>
                   <td className="px-3 py-2 text-sm font-medium">
                     {boxScore.player.player_name}
                   </td>

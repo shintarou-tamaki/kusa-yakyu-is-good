@@ -59,6 +59,7 @@ interface Props {
 
 // 守備位置の日本語変換
 const POSITION_MAP: Record<string, string> = {
+  // 英語キー
   pitcher: "投",
   catcher: "捕",
   first: "一",
@@ -69,7 +70,36 @@ const POSITION_MAP: Record<string, string> = {
   center: "中",
   right: "右",
   dh: "DH",
+  // 日本語キー（既に日本語で保存されている場合）
+  "投手": "投",
+  "捕手": "捕",
+  "一塁手": "一",
+  "二塁手": "二",
+  "三塁手": "三",
+  "遊撃手": "遊",
+  "左翼手": "左",
+  "中堅手": "中",
+  "右翼手": "右",
+  "指名打者": "DH",
 };
+
+// 打撃結果の選択肢
+const BATTING_RESULTS = [
+  { value: "", label: "-" },
+  { value: "安打", label: "安打" },
+  { value: "二塁打", label: "二塁打" },
+  { value: "三塁打", label: "三塁打" },
+  { value: "本塁打", label: "本塁打" },
+  { value: "四球", label: "四球" },
+  { value: "死球", label: "死球" },
+  { value: "三振", label: "三振" },
+  { value: "ゴロ", label: "ゴロ" },
+  { value: "フライ", label: "フライ" },
+  { value: "ライナー", label: "ライナー" },
+  { value: "犠打", label: "犠打" },
+  { value: "犠飛", label: "犠飛" },
+  { value: "フィールダースチョイス", label: "野選" },
+];
 
 // 打撃結果のスタイリング
 const getResultStyle = (result: string, notes?: string): string => {
@@ -238,6 +268,7 @@ export default function ScoreBoxDisplay({
     setBoxScores(scores);
   };
 
+  // handleCellEdit関数 - 守備位置編集に対応
   const handleCellEdit = async (
     playerId: string,
     inning: number,
@@ -248,7 +279,14 @@ export default function ScoreBoxDisplay({
     const cellKey = `${playerId}-${inning}-${field}`;
     setEditingCell(cellKey);
 
-    // 既存の値を取得
+    // 守備位置編集の場合
+    if (field === "position") {
+      const player = players.find((p) => p.id === playerId);
+      setEditValue(player?.position || "");
+      return;
+    }
+
+    // 既存の打撃結果編集処理
     const record = battingRecords.find(
       (r) => r.player_id === playerId && r.inning === inning
     );
@@ -261,6 +299,7 @@ export default function ScoreBoxDisplay({
     }
   };
 
+  // saveEdit関数 - 守備位置保存に対応
   const saveEdit = async () => {
     if (!editingCell) return;
 
@@ -268,12 +307,25 @@ export default function ScoreBoxDisplay({
     const inningNum = parseInt(inning);
 
     try {
+      // 守備位置の保存処理
+      if (field === "position") {
+        await supabase
+          .from("game_players")
+          .update({ position: editValue || null })
+          .eq("id", playerId);
+        
+        await fetchData();
+        setEditingCell(null);
+        setEditValue("");
+        return;
+      }
+
+      // 既存の打撃結果保存処理
       const existingRecord = battingRecords.find(
         (r) => r.player_id === playerId && r.inning === inningNum
       );
 
       if (existingRecord) {
-        // 既存レコードを更新
         const updateData: any = {};
         if (field === "result") updateData.result = editValue;
         if (field === "rbi") updateData.rbi = parseInt(editValue) || 0;
@@ -283,7 +335,6 @@ export default function ScoreBoxDisplay({
           .update(updateData)
           .eq("id", existingRecord.id);
       } else if (editValue) {
-        // 新規レコード作成
         const newRecord: any = {
           game_id: gameId,
           player_id: playerId,
@@ -297,7 +348,6 @@ export default function ScoreBoxDisplay({
         await supabase.from("game_batting_records").insert(newRecord);
       }
 
-      // データを再取得
       await fetchData();
     } catch (error) {
       console.error("保存エラー:", error);
@@ -388,8 +438,43 @@ export default function ScoreBoxDisplay({
                   <td className="px-2 py-2 text-center font-medium text-sm">
                     {boxScore.player.batting_order}
                   </td>
-                  <td className="px-2 py-2 text-center text-sm">
-                    {POSITION_MAP[boxScore.player.position || ""] || ""}
+                  {/* 守備位置 - 編集可能 */}
+                  <td 
+                    className={`px-2 py-2 text-center text-sm ${
+                      isEditable ? "cursor-pointer hover:bg-gray-100" : ""
+                    }`}
+                    onClick={() => isEditable && handleCellEdit(boxScore.player.id, 0, "position")}
+                  >
+                    {editingCell === `${boxScore.player.id}-0-position` ? (
+                      <select
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={saveEdit}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyPress={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            saveEdit();
+                          }
+                        }}
+                        className="w-full px-1 text-center text-sm border border-gray-300 rounded"
+                        autoFocus
+                      >
+                        <option value="">-</option>
+                        <option value="pitcher">投</option>
+                        <option value="catcher">捕</option>
+                        <option value="first">一</option>
+                        <option value="second">二</option>
+                        <option value="third">三</option>
+                        <option value="shortstop">遊</option>
+                        <option value="left">左</option>
+                        <option value="center">中</option>
+                        <option value="right">右</option>
+                        <option value="dh">DH</option>
+                      </select>
+                    ) : (
+                      boxScore.player.position ? (POSITION_MAP[boxScore.player.position] || boxScore.player.position) : "-"
+                    )}
                   </td>
                   <td className="px-3 py-2 text-sm font-medium">
                     {boxScore.player.player_name}
@@ -420,26 +505,37 @@ export default function ScoreBoxDisplay({
                         }
                       >
                         {isEditing ? (
-                          <input
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={saveEdit}
-                            onKeyPress={(e) => e.key === "Enter" && saveEdit()}
-                            className="w-full px-1 text-center"
-                            autoFocus
-                          />
-                        ) : (
-                          <span className="block px-1 py-1">
-                            {record
-                              ? getShortResult(
-                                  record.result,
-                                  record.rbi,
-                                  record.notes
-                                )
-                              : ""}
-                          </span>
-                        )}
+  <select
+    value={editValue}
+    onChange={(e) => setEditValue(e.target.value)}
+    onBlur={saveEdit}
+    onKeyPress={(e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        saveEdit();
+      }
+    }}
+    onClick={(e) => e.stopPropagation()}
+    className="w-full px-1 text-center text-xs border border-gray-300 rounded"
+    autoFocus
+  >
+    {BATTING_RESULTS.map((result) => (
+      <option key={result.value} value={result.value}>
+        {result.label}
+      </option>
+    ))}
+  </select>
+) : (
+  <span className="block px-1 py-1">
+    {record
+      ? getShortResult(
+          record.result,
+          record.rbi,
+          record.notes
+        )
+      : ""}
+  </span>
+)}
                       </td>
                     );
                   })}
