@@ -36,12 +36,11 @@ interface PitchingRecord {
   strikeouts: number;
   walks: number;
   home_runs_allowed: number;
-  // 以下のフィールドはデータベースに存在しない可能性があるため削除
-  // hit_batters?: number;
-  // wild_pitches?: number;
-  // win?: boolean;
-  // loss?: boolean;
-  // save?: boolean;
+  hit_batters?: number;
+  wild_pitches?: number;
+  win?: boolean;
+  loss?: boolean;
+  save?: boolean;
 }
 
 interface PlayerBattingBoxScore {
@@ -597,12 +596,11 @@ export default function ScoreBoxDisplay({
         strikeouts: newPitchingData.strikeouts || 0,
         walks: newPitchingData.walks || 0,
         home_runs_allowed: newPitchingData.home_runs_allowed || 0,
-        // 存在しないフィールドを削除
         // hit_batters: newPitchingData.hit_batters || 0,
         // wild_pitches: newPitchingData.wild_pitches || 0,
-        // win: newPitchingData.win || false,
-        // loss: newPitchingData.loss || false,
-        // save: newPitchingData.save || false,
+        win: newPitchingData.win || false,
+        loss: newPitchingData.loss || false,
+        save: newPitchingData.save || false,
       };
 
       console.log("保存するデータ:", pitchingData); // デバッグ用
@@ -654,8 +652,8 @@ export default function ScoreBoxDisplay({
         strikeouts: 0,
         walks: 0,
         home_runs_allowed: 0,
-        hit_batters: 0,
-        wild_pitches: 0,
+        // hit_batters: 0,
+        // wild_pitches: 0,
         win: false,
         loss: false,
         save: false,
@@ -1447,13 +1445,9 @@ export default function ScoreBoxDisplay({
                   <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
                     投球数
                   </th>
-                  {/* 暴投列を削除
-<th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
-  暴投
-</th>
-<th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
-  勝敗
-</th> */}
+                  <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
+                    勝敗
+                  </th>
                   {isEditable && (
                     <th className="px-2 py-2 text-xs font-medium text-gray-700 text-center">
                       操作
@@ -1502,19 +1496,26 @@ export default function ScoreBoxDisplay({
                           {record.home_runs_allowed}
                         </td>
                         <td className="px-2 py-2 text-center text-sm">-</td>
-                        {/* 暴投、勝敗列を削除
-<td className="px-2 py-2 text-center text-sm">
-  {record.wild_pitches || 0}
-</td>
-<td className="px-2 py-2 text-center text-sm">
-  {record.win
-    ? "勝"
-    : record.loss
-    ? "負"
-    : record.save
-    ? "S"
-    : "-"}
-</td> */}
+                        <td className="px-2 py-2 text-center text-sm">
+                          {record.win && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                              勝
+                            </span>
+                          )}
+                          {record.loss && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              負
+                            </span>
+                          )}
+                          {record.save && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              S
+                            </span>
+                          )}
+                          {!record.win && !record.loss && !record.save && (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
                         {isEditable && (
                           <td className="px-2 py-2 text-center">
                             <button
@@ -1776,9 +1777,9 @@ export default function ScoreBoxDisplay({
 </div> */}
             </div>
 
-            {/* 勝敗セーブ全体を削除
+            {/* 勝敗・セーブ選択 */}
             <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">
+              <label className="block text-sm font-medium mb-2 text-gray-700">
                 勝敗・セーブ
               </label>
               <div className="flex gap-4">
@@ -1797,7 +1798,7 @@ export default function ScoreBoxDisplay({
                     }
                     className="mr-2"
                   />
-                  勝
+                  <span className="text-red-600 font-semibold">勝</span>
                 </label>
                 <label className="flex items-center">
                   <input
@@ -1814,7 +1815,7 @@ export default function ScoreBoxDisplay({
                     }
                     className="mr-2"
                   />
-                  負
+                  <span className="text-blue-600 font-semibold">負</span>
                 </label>
                 <label className="flex items-center">
                   <input
@@ -1831,7 +1832,7 @@ export default function ScoreBoxDisplay({
                     }
                     className="mr-2"
                   />
-                  セーブ
+                  <span className="text-green-600 font-semibold">S</span>
                 </label>
                 <label className="flex items-center">
                   <input
@@ -1852,10 +1853,10 @@ export default function ScoreBoxDisplay({
                     }
                     className="mr-2"
                   />
-                  なし
+                  <span className="text-gray-600">なし</span>
                 </label>
               </div>
-            </div> */}
+            </div>
 
             {/* ボタン */}
             <div className="flex justify-end gap-2">
@@ -1871,8 +1872,8 @@ export default function ScoreBoxDisplay({
                     strikeouts: 0,
                     walks: 0,
                     home_runs_allowed: 0,
-                    hit_batters: 0,
-                    wild_pitches: 0,
+                    // hit_batters: 0,
+                    // wild_pitches: 0,
                     win: false,
                     loss: false,
                     save: false,
