@@ -953,19 +953,18 @@ export default function GameDetailPage({
               </div>
             )}
 
-          {/* スコアボックス形式の成績表示（ここに追加） */}
-          {/* 試合スコアボックスは常に表示（scheduled以外） */}
-{game.status !== "scheduled" && (
-  <div className="bg-white rounded-lg shadow p-6 mt-6">
-    <div className="flex justify-between items-center mb-4">
-      <h2 className="text-xl font-bold">試合スコアボックス</h2>
-      {canEdit && gamePlayers.length === 0 && (
-  <p className="text-sm text-gray-600">
-    選手名をクリックして選手を追加してください
-  </p>
-)}
-    </div>
-    <ScoreBoxDisplay
+          {/* 試合スコアボックス - 編集可能な場合は常に表示 */}
+          {(canEdit || game.status !== "scheduled") && (
+            <div className="bg-white rounded-lg shadow p-6 mt-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold">試合スコアボックス</h2>
+                {canEdit && gamePlayers.length === 0 && (
+                  <p className="text-sm text-gray-600">
+                    選手名をクリックして選手を追加してください
+                  </p>
+                )}
+              </div>
+              <ScoreBoxDisplay
                 gameId={gameId}
                 isEditable={canEdit}
                 gameStatus={game.status}
