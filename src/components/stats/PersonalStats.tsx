@@ -32,10 +32,14 @@ interface PitchingStats {
   total_strikeouts: number;
   total_walks: number;
   total_home_runs_allowed: number;
+  total_wins: number;
+  total_losses: number;
+  total_saves: number;
   era: string;
   whip: string;
   k_per_nine: string;
   bb_per_nine: string;
+  win_percentage: string;
 }
 
 interface PersonalStatsProps {
@@ -109,9 +113,9 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
         setBattingStats(stats);
       }
 
-      // 投手成績の集計
+      // 投手成績の集計（直接game_pitching_recordsから取得）
       const { data: pitchingData, error: pitchingError } = await supabase
-        .from("player_pitching_stats")
+        .from("game_pitching_records")
         .select("*")
         .in("player_id", gamePlayerIds);
 
@@ -194,6 +198,8 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
   };
 
   const calculatePitchingTotals = (data: any[]): PitchingStats => {
+    console.log("取得した投手データ:", data);
+    console.log("最初のゲームデータ:", data[0]);
     const totals = data.reduce(
       (acc, game) => ({
         total_games: acc.total_games + 1,
@@ -205,6 +211,9 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
         total_walks: acc.total_walks + (game.walks || 0),
         total_home_runs_allowed:
           acc.total_home_runs_allowed + (game.home_runs_allowed || 0),
+        total_wins: acc.total_wins + (game.win ? 1 : 0),
+        total_losses: acc.total_losses + (game.loss ? 1 : 0),
+        total_saves: acc.total_saves + (game.save ? 1 : 0),
       }),
       {
         total_games: 0,
@@ -215,6 +224,9 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
         total_strikeouts: 0,
         total_walks: 0,
         total_home_runs_allowed: 0,
+        total_wins: 0,
+        total_losses: 0,
+        total_saves: 0,
       }
     );
 
@@ -223,8 +235,7 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
 
     // 実際のイニング数に変換（計算用）
     const actualInnings =
-      Math.floor(totals.total_innings) +
-      ((totals.total_innings % 1) * 10) / 3;
+      Math.floor(totals.total_innings) + ((totals.total_innings % 1) * 10) / 3;
 
     // 防御率計算（7回換算）
     const era =
@@ -253,6 +264,13 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
         ? ((totals.total_walks * 7) / actualInnings).toFixed(2)
         : "0.00";
 
+    // 勝率計算を追加
+    const decisions = totals.total_wins + totals.total_losses;
+    const winPercentage =
+      decisions > 0
+        ? ((totals.total_wins / decisions) * 100).toFixed(1)
+        : "0.0";
+
     return {
       player_id: userId,
       ...totals,
@@ -261,6 +279,7 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
       whip: whip,
       k_per_nine: kPerNine,
       bb_per_nine: bbPerNine,
+      win_percentage: winPercentage,
     };
   };
 
@@ -433,6 +452,24 @@ export default function PersonalStats({ userId }: PersonalStatsProps) {
               <dt className="text-sm text-gray-500">被安打</dt>
               <dd className="text-xl font-semibold">
                 {pitchingStats.total_hits_allowed}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">勝敗</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.total_wins}-{pitchingStats.total_losses}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">セーブ</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.total_saves}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">勝率</dt>
+              <dd className="text-xl font-semibold">
+                {pitchingStats.win_percentage}%
               </dd>
             </div>
           </div>

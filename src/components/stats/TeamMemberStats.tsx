@@ -36,10 +36,12 @@ interface MemberPitchingStats {
   home_runs_allowed: number;
   wins: number;
   losses: number;
+  saves: number;
   era: string;
   whip: string;
   k_per_nine: string;
   bb_per_nine: string;
+  win_percentage: string;
 }
 
 interface TeamMemberStatsProps {
@@ -79,19 +81,22 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
       console.log("チームメンバー:", teamMembers);
 
       // 各メンバーの表示名を取得
-      const userIds = teamMembers.map(m => m.user_id);
+      const userIds = teamMembers.map((m) => m.user_id);
       const { data: userProfiles } = await supabase
         .from("user_profiles")
         .select("id, display_name")
         .in("id", userIds);
 
       const userProfileMap = new Map(
-        userProfiles?.map(p => [p.id, p.display_name]) || []
+        userProfiles?.map((p) => [p.id, p.display_name]) || []
       );
 
       // 各メンバーのgame_player IDを取得
-      const memberGamePlayerMap = new Map<string, { ids: string[], name: string }>();
-      
+      const memberGamePlayerMap = new Map<
+        string,
+        { ids: string[]; name: string }
+      >();
+
       for (const member of teamMembers) {
         // このチームメンバーに関連するすべてのgame_playersを取得
         const { data: gamePlayerData } = await supabase
@@ -101,16 +106,20 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
 
         if (gamePlayerData && gamePlayerData.length > 0) {
           // 表示名の優先順位: user_profiles.display_name > game_players.player_name > "名前未設定"
-          const displayName = userProfileMap.get(member.user_id) || 
-                             gamePlayerData[0].player_name || 
-                             "名前未設定";
-          
+          const displayName =
+            userProfileMap.get(member.user_id) ||
+            gamePlayerData[0].player_name ||
+            "名前未設定";
+
           memberGamePlayerMap.set(member.id, {
-            ids: gamePlayerData.map(gp => gp.id),
-            name: displayName
+            ids: gamePlayerData.map((gp) => gp.id),
+            name: displayName,
           });
-          
-          console.log(`メンバー ${displayName}: game_player IDs:`, gamePlayerData.map(gp => gp.id));
+
+          console.log(
+            `メンバー ${displayName}: game_player IDs:`,
+            gamePlayerData.map((gp) => gp.id)
+          );
         }
       }
 
@@ -123,7 +132,7 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
         .eq("home_team_id", teamId);
 
       if (teamGames && teamGames.length > 0) {
-        const gameIds = teamGames.map(g => g.id);
+        const gameIds = teamGames.map((g) => g.id);
         console.log("チームの試合ID:", gameIds);
 
         // これらの試合に参加した全プレイヤーを取得
@@ -137,7 +146,7 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
         // team_member_idがnullのプレイヤーも名前でグループ化
         if (allGamePlayers) {
           const playerNameMap = new Map<string, string[]>();
-          
+
           for (const gp of allGamePlayers) {
             if (!gp.team_member_id) {
               // team_member_idがない場合は名前でグループ化
@@ -151,14 +160,14 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
           for (const [playerName, gpIds] of playerNameMap) {
             // 既存のマップに含まれていない場合のみ追加
             const exists = Array.from(memberGamePlayerMap.values()).some(
-              v => v.name === playerName
+              (v) => v.name === playerName
             );
-            
+
             if (!exists && gpIds.length > 0) {
               const pseudoId = `name_${playerName}`;
               memberGamePlayerMap.set(pseudoId, {
                 ids: gpIds,
-                name: playerName
+                name: playerName,
               });
               console.log(`名前ベースで追加: ${playerName}:`, gpIds);
             }
@@ -168,7 +177,7 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
 
       // 打撃成績を集計
       const battingStatsList: MemberBattingStats[] = [];
-      
+
       for (const [memberId, playerInfo] of memberGamePlayerMap) {
         const { data: battingData, error: battingError } = await supabase
           .from("player_batting_stats")
@@ -181,14 +190,18 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
         }
 
         if (battingData && battingData.length > 0) {
-          const stats = calculateMemberBattingTotals(memberId, playerInfo.name, battingData);
+          const stats = calculateMemberBattingTotals(
+            memberId,
+            playerInfo.name,
+            battingData
+          );
           battingStatsList.push(stats);
         }
       }
 
       // 投手成績を集計
       const pitchingStatsList: MemberPitchingStats[] = [];
-      
+
       for (const [memberId, playerInfo] of memberGamePlayerMap) {
         const { data: pitchingData, error: pitchingError } = await supabase
           .from("player_pitching_stats")
@@ -201,7 +214,11 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
         }
 
         if (pitchingData && pitchingData.length > 0) {
-          const stats = calculateMemberPitchingTotals(memberId, playerInfo.name, pitchingData);
+          const stats = calculateMemberPitchingTotals(
+            memberId,
+            playerInfo.name,
+            pitchingData
+          );
           pitchingStatsList.push(stats);
         }
       }
@@ -211,7 +228,6 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
 
       setBattingStats(battingStatsList);
       setPitchingStats(pitchingStatsList);
-
     } catch (error) {
       console.error("成績取得エラー:", error);
     } finally {
@@ -252,22 +268,21 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
     );
 
     // 打率計算
-    const avg = totals.at_bats > 0 
-      ? (totals.hits / totals.at_bats).toFixed(3) 
-      : ".000";
+    const avg =
+      totals.at_bats > 0 ? (totals.hits / totals.at_bats).toFixed(3) : ".000";
 
     // 出塁率計算
     const plateAppearances = totals.at_bats + totals.walks;
-    const obp = plateAppearances > 0
-      ? ((totals.hits + totals.walks) / plateAppearances).toFixed(3)
-      : ".000";
+    const obp =
+      plateAppearances > 0
+        ? ((totals.hits + totals.walks) / plateAppearances).toFixed(3)
+        : ".000";
 
     // 長打率計算
-    const totalBases = totals.hits + totals.doubles + 
-      (totals.triples * 2) + (totals.home_runs * 3);
-    const slg = totals.at_bats > 0
-      ? (totalBases / totals.at_bats).toFixed(3)
-      : ".000";
+    const totalBases =
+      totals.hits + totals.doubles + totals.triples * 2 + totals.home_runs * 3;
+    const slg =
+      totals.at_bats > 0 ? (totalBases / totals.at_bats).toFixed(3) : ".000";
 
     // OPS計算
     const ops = (parseFloat(obp) + parseFloat(slg)).toFixed(3);
@@ -297,9 +312,11 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
         earned_runs: acc.earned_runs + (game.earned_runs || 0),
         strikeouts: acc.strikeouts + (game.strikeouts || 0),
         walks: acc.walks + (game.walks || 0),
-        home_runs_allowed: acc.home_runs_allowed + (game.home_runs_allowed || 0),
-        wins: acc.wins,  // 勝敗は別途計算が必要
-        losses: acc.losses,
+        home_runs_allowed:
+          acc.home_runs_allowed + (game.home_runs_allowed || 0),
+        wins: acc.wins + (game.win ? 1 : 0), // ← 実際の勝利数を集計
+        losses: acc.losses + (game.loss ? 1 : 0), // ← 実際の敗戦数を集計
+        saves: acc.saves + (game.save ? 1 : 0), // ← セーブ数を集計
       }),
       {
         games: 0,
@@ -312,35 +329,46 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
         home_runs_allowed: 0,
         wins: 0,
         losses: 0,
+        saves: 0, // ← 追加
       }
     );
 
+    // 勝率の計算を追加
+    const decisions = totals.wins + totals.losses;
+    const winPercentage =
+      decisions > 0 ? ((totals.wins / decisions) * 100).toFixed(1) : "0.0";
+
     // 投球回を実際のイニング数に変換
-    const actualInnings = Math.floor(totals.innings_pitched) + 
-      ((totals.innings_pitched % 1) * 10 / 3);
+    const actualInnings =
+      Math.floor(totals.innings_pitched) +
+      ((totals.innings_pitched % 1) * 10) / 3;
 
     // 投球回の表示形式
     const inningsDisplay = formatInnings(totals.innings_pitched);
 
     // 防御率計算（7回換算）
-    const era = actualInnings > 0
-      ? ((totals.earned_runs * 7) / actualInnings).toFixed(2)
-      : "0.00";
+    const era =
+      actualInnings > 0
+        ? ((totals.earned_runs * 7) / actualInnings).toFixed(2)
+        : "0.00";
 
     // WHIP計算
-    const whip = actualInnings > 0
-      ? ((totals.walks + totals.hits_allowed) / actualInnings).toFixed(2)
-      : "0.00";
+    const whip =
+      actualInnings > 0
+        ? ((totals.walks + totals.hits_allowed) / actualInnings).toFixed(2)
+        : "0.00";
 
     // K/7計算
-    const kPerNine = actualInnings > 0
-      ? ((totals.strikeouts * 7) / actualInnings).toFixed(2)
-      : "0.00";
+    const kPerNine =
+      actualInnings > 0
+        ? ((totals.strikeouts * 7) / actualInnings).toFixed(2)
+        : "0.00";
 
     // BB/7計算
-    const bbPerNine = actualInnings > 0
-      ? ((totals.walks * 7) / actualInnings).toFixed(2)
-      : "0.00";
+    const bbPerNine =
+      actualInnings > 0
+        ? ((totals.walks * 7) / actualInnings).toFixed(2)
+        : "0.00";
 
     return {
       member_id: memberId,
@@ -357,7 +385,7 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
   const formatInnings = (innings: number): string => {
     const wholeInnings = Math.floor(innings);
     const outs = Math.round((innings % 1) * 10);
-    
+
     if (outs === 0) return `${wholeInnings}.0`;
     if (outs === 1) return `${wholeInnings}.1`;
     if (outs === 2) return `${wholeInnings}.2`;
@@ -470,31 +498,33 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   選手名
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("games")}
                 >
                   試合
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("batting_average")}
                 >
-                  打率 {sortField === "batting_average" && (sortDirection === "desc" ? "↓" : "↑")}
+                  打率{" "}
+                  {sortField === "batting_average" &&
+                    (sortDirection === "desc" ? "↓" : "↑")}
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("home_runs")}
                 >
                   本塁打
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("rbi")}
                 >
                   打点
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("ops")}
                 >
@@ -531,7 +561,10 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {sortedBattingStats.map((stats, index) => (
-                <tr key={stats.member_id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                <tr
+                  key={stats.member_id}
+                  className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                >
                   <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                     {stats.member_name}
                   </td>
@@ -590,31 +623,32 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   選手名
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("games")}
                 >
                   登板
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("era")}
                 >
-                  防御率 {sortField === "era" && (sortDirection === "asc" ? "↑" : "↓")}
+                  防御率{" "}
+                  {sortField === "era" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("innings_pitched")}
                 >
                   投球回
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("strikeouts")}
                 >
                   奪三振
                 </th>
-                <th 
+                <th
                   className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort("whip")}
                 >
@@ -641,11 +675,23 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
                 <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   BB/7
                 </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  勝敗
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  セーブ
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  勝率
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {sortedPitchingStats.map((stats, index) => (
-                <tr key={stats.member_id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                <tr
+                  key={stats.member_id}
+                  className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}
+                >
                   <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                     {stats.member_name}
                   </td>
@@ -684,6 +730,15 @@ export default function TeamMemberStats({ teamId }: TeamMemberStatsProps) {
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
                     {stats.bb_per_nine}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.wins}-{stats.losses}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-500">
+                    {stats.saves}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-center font-semibold text-gray-900">
+                    {stats.win_percentage}%
                   </td>
                 </tr>
               ))}

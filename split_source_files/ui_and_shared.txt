@@ -1,5 +1,5 @@
 # UI・共有コンポーネント Source Code
-Generated at: 2025-09-01
+Generated at: 2025-09-02
 File count: 19 files
 Purpose: UI components and shared utilities
 
@@ -1914,18 +1914,17 @@ export default function GameDetailPage({
             )}
 
           {}
-          {}
-{game.status !== "scheduled" && (
-  <div className="bg-white rounded-lg shadow p-6 mt-6">
-    <div className="flex justify-between items-center mb-4">
-      <h2 className="text-xl font-bold">試合スコアボックス</h2>
-      {canEdit && gamePlayers.length === 0 && (
-  <p className="text-sm text-gray-600">
-    選手名をクリックして選手を追加してください
-  </p>
-)}
-    </div>
-    <ScoreBoxDisplay
+          {(canEdit || game.status !== "scheduled") && (
+            <div className="bg-white rounded-lg shadow p-6 mt-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold">試合スコアボックス</h2>
+                {canEdit && gamePlayers.length === 0 && (
+                  <p className="text-sm text-gray-600">
+                    選手名をクリックして選手を追加してください
+                  </p>
+                )}
+              </div>
+              <ScoreBoxDisplay
                 gameId={gameId}
                 isEditable={canEdit}
                 gameStatus={game.status}
