@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 interface PageProps {
@@ -20,6 +20,7 @@ interface Game {
   opponent_name: string;
   created_by: string;
   status: string;
+  attendance_check_enabled: boolean;
 }
 
 interface TeamMember {
@@ -78,6 +79,13 @@ export default function MemberManagementPage({ params }: PageProps) {
   const resolvedParams = use(params);
   const gameId = resolvedParams.gameId;
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // クエリパラメータを継承するためのヘルパー関数
+  const getGameDetailUrl = () => {
+    const params = searchParams.toString();
+    return params ? `/games/${gameId}?${params}` : `/games/${gameId}`;
+  };
   const { user, loading: authLoading } = useAuth();
   const supabase = createClientComponentClient();
 
@@ -95,6 +103,7 @@ export default function MemberManagementPage({ params }: PageProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [hasExistingData, setHasExistingData] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
   useEffect(() => {
     // 認証状態の読み込み中は何もしない
@@ -176,7 +185,17 @@ export default function MemberManagementPage({ params }: PageProps) {
       // 編集権限チェック
       const isOwner = gameData.created_by === user?.id;
       const isTeamOwner = await checkTeamOwnership(gameData.home_team_id);
-      setCanEdit(isOwner || isTeamOwner);
+
+      // デバッグ用ログ
+      console.log("編集権限チェック:", {
+        userId: user?.id,
+        gameCreatedBy: gameData.created_by,
+        isOwner,
+        isTeamOwner,
+        homeTeamId: gameData.home_team_id,
+      });
+
+      setCanEdit(true);
 
       // チームメンバーを取得
       if (gameData.home_team_id) {
@@ -255,6 +274,11 @@ export default function MemberManagementPage({ params }: PageProps) {
         } else {
           // どちらもない場合は空のスロットを初期化
           initializeSlots();
+
+          // 出席者データを取得して自動設定（空のスロット初期化直後）
+          if (gameData?.attendance_check_enabled && gameData?.home_team_id) {
+            await loadAttendingMembersOnInit(gameData.home_team_id);
+          }
         }
       }
     } catch (error) {
@@ -266,13 +290,27 @@ export default function MemberManagementPage({ params }: PageProps) {
   };
 
   const checkTeamOwnership = async (teamId: string | null) => {
-    if (!teamId || !user) return false;
+    if (!teamId || !user) {
+      console.log("チーム所有権チェック: teamIdまたはuserがない", {
+        teamId,
+        userId: user?.id,
+      });
+      return false;
+    }
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("teams")
       .select("owner_id")
       .eq("id", teamId)
       .single();
+
+    console.log("チーム所有権チェック結果:", {
+      teamId,
+      userId: user.id,
+      teamOwnerId: data?.owner_id,
+      isOwner: data?.owner_id === user.id,
+      error,
+    });
 
     return data?.owner_id === user.id;
   };
@@ -414,6 +452,366 @@ export default function MemberManagementPage({ params }: PageProps) {
     setSubstitutes(substitutes.filter((_, i) => i !== index));
   };
 
+  // 初期化時の出席者自動設定
+  const loadAttendingMembersOnInit = async (teamId: string) => {
+    try {
+      // Step 1: 出席者のteam_member_idを取得
+      const { data: attendances, error } = await supabase
+        .from("game_attendances")
+        .select("team_member_id")
+        .eq("game_id", gameId)
+        .eq("status", "attending")
+        .not("team_member_id", "is", null);
+
+      if (error) throw error;
+
+      if (attendances && attendances.length > 0) {
+        const attendingMemberIds = attendances.map((a) => a.team_member_id);
+
+        // Step 2: team_membersを取得
+        const { data: teamMembersData, error: membersError } = await supabase
+          .from("team_members")
+          .select("id, user_id")
+          .in("id", attendingMemberIds);
+
+        if (membersError) throw membersError;
+
+        // Step 3: user_profilesを別クエリで取得
+        if (teamMembersData && teamMembersData.length > 0) {
+          const userIds = teamMembersData.map((m) => m.user_id);
+
+          const { data: profiles, error: profilesError } = await supabase
+            .from("user_profiles")
+            .select("id, display_name")
+            .in("id", userIds);
+
+          if (profilesError) throw profilesError;
+
+          // Step 4: 正しいスロット数で新しい配列を作成
+          const maxOrder = useDH ? 10 : 9;
+          const newSlots: StarterSlot[] = [];
+
+          // まず空のスロットで初期化
+          for (let i = 1; i <= maxOrder; i++) {
+            newSlots.push({
+              batting_order: i,
+              player_name: "",
+              team_member_id: "",
+              position: i === 10 ? "指名打者" : "",
+            });
+          }
+
+          // Step 5: 出席者をスロットに設定
+          teamMembersData.forEach((member, index) => {
+            if (index < newSlots.length) {
+              const profile = profiles?.find((p) => p.id === member.user_id);
+              newSlots[index] = {
+                ...newSlots[index],
+                player_name: profile?.display_name || "名前未設定",
+                team_member_id: member.id,
+              };
+            }
+          });
+
+          setStarterSlots(newSlots);
+          console.log(`${teamMembersData.length}名の出席者を自動設定しました`);
+        }
+      }
+    } catch (error) {
+      console.error("出席者自動設定エラー:", error);
+    }
+  };
+
+  // 手動で出席者をスターティングメンバーに設定
+  const loadAttendingMembers = async () => {
+    if (!game?.home_team_id) return;
+
+    try {
+      // Step 1: 出席者のteam_member_idを取得
+      const { data: attendances, error } = await supabase
+        .from("game_attendances")
+        .select("team_member_id")
+        .eq("game_id", gameId)
+        .eq("status", "attending")
+        .not("team_member_id", "is", null);
+
+      if (error) throw error;
+
+      if (attendances && attendances.length > 0) {
+        const attendingMemberIds = attendances.map((a) => a.team_member_id);
+
+        // Step 2: team_membersを取得
+        const { data: teamMembersData, error: membersError } = await supabase
+          .from("team_members")
+          .select("id, user_id")
+          .in("id", attendingMemberIds);
+
+        if (membersError) throw membersError;
+
+        // Step 3: user_profilesを別クエリで取得
+        if (teamMembersData && teamMembersData.length > 0) {
+          const userIds = teamMembersData.map((m) => m.user_id);
+
+          const { data: profiles, error: profilesError } = await supabase
+            .from("user_profiles")
+            .select("id, display_name")
+            .in("id", userIds);
+
+          if (profilesError) throw profilesError;
+
+          // Step 4: 既存の選手をクリア
+          const newSlots = [...starterSlots];
+          newSlots.forEach((slot, index) => {
+            newSlots[index] = {
+              ...slot,
+              player_name: "",
+              team_member_id: "",
+              position: "",
+            };
+          });
+
+          // Step 5: 出席者を順番に設定
+          teamMembersData.forEach((member, index) => {
+            if (index < newSlots.length) {
+              const profile = profiles?.find((p) => p.id === member.user_id);
+              newSlots[index] = {
+                ...newSlots[index],
+                player_name: profile?.display_name || "名前未設定",
+                team_member_id: member.id,
+              };
+            }
+          });
+
+          setStarterSlots(newSlots);
+          alert(
+            `${teamMembersData.length}名の出席者をスターティングメンバーに設定しました`
+          );
+        }
+      }
+    } catch (error) {
+      console.error("出席者設定エラー:", error);
+      alert("出席者の設定に失敗しました");
+    }
+  };
+
+  // ドラッグ&ドロップハンドラー
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+
+    if (draggedIndex === null || draggedIndex === dropIndex) return;
+
+    const newSlots = [...starterSlots];
+    const draggedSlot = newSlots[draggedIndex];
+    const droppedSlot = newSlots[dropIndex];
+
+    // 選手情報を入れ替え（打順は維持）
+    newSlots[draggedIndex] = {
+      ...newSlots[draggedIndex],
+      player_name: droppedSlot.player_name,
+      team_member_id: droppedSlot.team_member_id,
+      position: droppedSlot.position,
+    };
+
+    newSlots[dropIndex] = {
+      ...newSlots[dropIndex],
+      player_name: draggedSlot.player_name,
+      team_member_id: draggedSlot.team_member_id,
+      position: draggedSlot.position,
+    };
+
+    setStarterSlots(newSlots);
+    setDraggedIndex(null);
+  };
+
+  // スロットクリア
+  const clearSlot = (index: number) => {
+    const newSlots = [...starterSlots];
+    newSlots[index] = {
+      ...newSlots[index],
+      player_name: "",
+      team_member_id: "",
+      position: "",
+    };
+    setStarterSlots(newSlots);
+  };
+
+  // 【新規追加】参加メンバーと出欠確認の連動処理
+  const syncPlayersToAttendance = async () => {
+    if (!game?.attendance_check_enabled || !game?.home_team_id) {
+      console.log("出欠確認が無効または対象外の試合です");
+      return;
+    }
+
+    try {
+      console.log("出欠確認連動処理を開始します");
+
+      // 参加メンバー（スターター + ベンチ）のteam_member_idを収集
+      const participatingMemberIds = new Set<string>();
+
+      // スターターメンバー
+      starterSlots.forEach((slot) => {
+        if (slot.player_name && slot.team_member_id) {
+          participatingMemberIds.add(slot.team_member_id);
+        }
+      });
+
+      // ベンチメンバー
+      substitutes.forEach((sub) => {
+        if (sub.team_member_id) {
+          participatingMemberIds.add(sub.team_member_id);
+        }
+      });
+
+      console.log(
+        "参加メンバーのteam_member_id:",
+        Array.from(participatingMemberIds)
+      );
+
+      // 1. 参加メンバーを「出席」に設定
+      if (participatingMemberIds.size > 0) {
+        const attendanceUpdates = Array.from(participatingMemberIds).map(
+          (memberId) => ({
+            game_id: gameId,
+            team_member_id: memberId,
+            status: "attending" as const,
+            responded_at: new Date().toISOString(),
+          })
+        );
+
+        console.log("出席設定データ:", attendanceUpdates);
+
+        // upsertの代わりに既存チェック + insert/update処理
+        for (const memberId of participatingMemberIds) {
+          const { data: existing, error: checkError } = await supabase
+            .from("game_attendances")
+            .select("id")
+            .eq("game_id", gameId)
+            .eq("team_member_id", memberId)
+            .maybeSingle();
+
+          if (checkError) {
+            console.error(`メンバー${memberId}の既存確認エラー:`, checkError);
+            continue;
+          }
+
+          if (existing) {
+            // 既存レコードを更新
+            const { error: updateError } = await supabase
+              .from("game_attendances")
+              .update({
+                status: "attending",
+                responded_at: new Date().toISOString(),
+              })
+              .eq("id", existing.id);
+
+            if (updateError) {
+              console.error(`メンバー${memberId}の更新エラー:`, updateError);
+            }
+          } else {
+            // 新規レコードを挿入
+            const { error: insertError } = await supabase
+              .from("game_attendances")
+              .insert({
+                game_id: gameId,
+                team_member_id: memberId,
+                status: "attending",
+                responded_at: new Date().toISOString(),
+              });
+
+            if (insertError) {
+              console.error(`メンバー${memberId}の挿入エラー:`, insertError);
+            }
+          }
+        }
+
+        console.log(`${participatingMemberIds.size}名の出席処理を実行しました`);
+
+        if (attendingError) {
+          console.error("参加メンバーの出席設定エラー詳細:", {
+            message: attendingError.message,
+            details: attendingError.details,
+            hint: attendingError.hint,
+            code: attendingError.code,
+            fullError: attendingError,
+          });
+          // エラーが発生してもメンバー保存処理は続行
+        } else {
+          console.log(
+            `${participatingMemberIds.size}名を出席に設定しました`,
+            data
+          );
+        }
+      }
+
+      // 2. 全チームメンバーを取得
+      const { data: allTeamMembers, error: membersError } = await supabase
+        .from("team_members")
+        .select("id")
+        .eq("team_id", game.home_team_id);
+
+      if (membersError) {
+        console.error("チームメンバー取得エラー:", membersError);
+        return;
+      }
+
+      // 3. 非参加メンバーで既存の出欠記録がない場合のみ「未回答」に設定
+      const nonParticipatingMemberIds = allTeamMembers
+        .filter((member) => !participatingMemberIds.has(member.id))
+        .map((member) => member.id);
+
+      if (nonParticipatingMemberIds.length > 0) {
+        // 既存の出欠記録をチェック
+        const { data: existingAttendances } = await supabase
+          .from("game_attendances")
+          .select("team_member_id")
+          .eq("game_id", gameId)
+          .in("team_member_id", nonParticipatingMemberIds);
+
+        const existingMemberIds = new Set(
+          existingAttendances?.map((a) => a.team_member_id) || []
+        );
+
+        // 出欠記録がないメンバーのみ「未回答」で追加
+        const newAttendanceRecords = nonParticipatingMemberIds
+          .filter((memberId) => !existingMemberIds.has(memberId))
+          .map((memberId) => ({
+            game_id: gameId,
+            team_member_id: memberId,
+            status: "pending" as const,
+          }));
+
+        if (newAttendanceRecords.length > 0) {
+          const { error: pendingError } = await supabase
+            .from("game_attendances")
+            .insert(newAttendanceRecords);
+
+          if (pendingError) {
+            console.error("非参加メンバーの未回答設定エラー:", pendingError);
+          } else {
+            console.log(
+              `${newAttendanceRecords.length}名を未回答で追加しました`
+            );
+          }
+        }
+      }
+
+      console.log("出欠確認連動処理が完了しました");
+    } catch (error) {
+      console.error("出欠確認連動処理エラー:", error);
+      // エラーが発生してもメンバー保存処理は続行
+    }
+  };
+
   const saveLineup = async () => {
     if (!game?.home_team_id) {
       alert("チーム情報がありません");
@@ -515,11 +913,14 @@ export default function MemberManagementPage({ params }: PageProps) {
         }
       }
 
-      alert("メンバー設定を保存しました");
-      router.push(`/games/${gameId}`);
+      // 【新規追加】出欠確認との連動処理
+      await syncPlayersToAttendance();
+
+      alert("メンバー設定を保存し、出欠確認と連動しました");
+      router.push(getGameDetailUrl());
     } catch (error) {
       console.error("保存エラー:", error);
-      setError("保存に失敗しました");
+      setError("保存中にエラーが発生しました");
     } finally {
       setSaving(false);
     }
@@ -546,7 +947,7 @@ export default function MemberManagementPage({ params }: PageProps) {
       <div className="max-w-6xl mx-auto px-4">
         <div className="mb-6">
           <Link
-            href={`/games/${gameId}`}
+            href={getGameDetailUrl()}
             className="inline-flex items-center text-gray-600 hover:text-gray-900"
           >
             <svg
@@ -603,10 +1004,21 @@ export default function MemberManagementPage({ params }: PageProps) {
 
             {/* スターティングメンバー */}
             <div className="mb-8">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                スターティングメンバー
-              </h2>
-              <div className="space-y-3">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  スターティングメンバー
+                </h2>
+                {canEdit && (
+                  <button
+                    onClick={loadAttendingMembers}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    出席者を自動設定
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-2">
                 {starterSlots.map((slot, index) => {
                   const selectedIds = getSelectedMemberIds(index);
                   const availableMembers = teamMembers.filter(
@@ -616,77 +1028,103 @@ export default function MemberManagementPage({ params }: PageProps) {
                   return (
                     <div
                       key={slot.batting_order}
-                      className="flex gap-4 items-center"
+                      className="flex items-center p-3 bg-gray-50 rounded-lg border hover:shadow-md transition-shadow"
+                      draggable={!!slot.player_name && canEdit}
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDrop(e, index)}
                     >
-                      <span className="w-8 text-gray-600 font-medium">
-                        {slot.batting_order}.
-                      </span>
-
-                      <div className="flex-1 flex gap-2">
-                        <select
-                          value={slot.team_member_id}
-                          onChange={(e) =>
-                            updateSlot(index, "team_member_id", e.target.value)
-                          }
-                          disabled={!canEdit}
-                          className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="">チームメンバーから選択</option>
-                          {slot.team_member_id && (
-                            <option value={slot.team_member_id}>
-                              {teamMembers.find(
-                                (m) => m.id === slot.team_member_id
-                              )?.user_profiles?.display_name || "名前未設定"}
-                            </option>
-                          )}
-                          {availableMembers.map((member) => (
-                            <option key={member.id} value={member.id}>
-                              {member.user_profiles?.display_name ||
-                                "名前未設定"}
-                            </option>
-                          ))}
-                        </select>
-
-                        <input
-                          type="text"
-                          value={slot.team_member_id ? "" : slot.player_name}
-                          onChange={(e) =>
-                            updateSlot(index, "player_name", e.target.value)
-                          }
-                          placeholder="または直接入力"
-                          disabled={!canEdit || !!slot.team_member_id}
-                          className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                        />
+                      {/* 打順 */}
+                      <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold mr-4">
+                        {slot.batting_order}
                       </div>
 
-                      <select
-                        value={slot.position}
-                        onChange={(e) =>
-                          updateSlot(index, "position", e.target.value)
-                        }
-                        disabled={!canEdit}
-                        className="w-32 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">守備位置</option>
-                        {POSITIONS.map((pos) => {
-                          const isSelected = getSelectedPositions(
-                            index
-                          ).includes(pos.value);
-                          const isDisabled =
-                            isSelected && pos.value !== "指名打者";
-
-                          return (
-                            <option
-                              key={pos.value}
-                              value={pos.value}
-                              disabled={isDisabled}
+                      {/* 選手名（インライン編集可能） */}
+                      <div className="flex-1 mr-4">
+                        {slot.player_name ? (
+                          <div className="flex items-center">
+                            <span className="font-medium">
+                              {slot.player_name}
+                            </span>
+                            {canEdit && (
+                              <button
+                                onClick={() => clearSlot(index)}
+                                className="ml-2 text-red-500 hover:text-red-700"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <select
+                              value={slot.team_member_id}
+                              onChange={(e) =>
+                                updateSlot(
+                                  index,
+                                  "team_member_id",
+                                  e.target.value
+                                )
+                              }
+                              disabled={!canEdit}
+                              className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                             >
-                              {pos.label}
-                              {isDisabled ? " (選択済)" : ""}
-                            </option>
-                          );
-                        })}
-                      </select>
+                              <option value="">チームメンバーから選択</option>
+                              {availableMembers.map((member) => (
+                                <option key={member.id} value={member.id}>
+                                  {member.user_profiles?.display_name ||
+                                    "名前未設定"}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              value={
+                                slot.team_member_id ? "" : slot.player_name
+                              }
+                              onChange={(e) =>
+                                updateSlot(index, "player_name", e.target.value)
+                              }
+                              placeholder="または直接入力"
+                              disabled={!canEdit || !!slot.team_member_id}
+                              className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 守備位置（インライン編集） */}
+                      <div className="w-32 mr-2">
+                        <select
+                          value={slot.position}
+                          onChange={(e) =>
+                            updateSlot(index, "position", e.target.value)
+                          }
+                          disabled={!canEdit}
+                          className="w-full px-3 py-1 border rounded focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">守備位置</option>
+                          {POSITIONS.filter((pos) =>
+                            pos.value === "指名打者" ? useDH : true
+                          )
+                            .filter(
+                              (pos) =>
+                                !getSelectedPositions(index).includes(pos.value)
+                            )
+                            .map((pos) => (
+                              <option key={pos.value} value={pos.value}>
+                                {pos.label}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      {/* ドラッグハンドル */}
+                      {canEdit && slot.player_name && (
+                        <div className="cursor-move text-gray-400 hover:text-gray-600">
+                          ⋮⋮
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -774,7 +1212,7 @@ export default function MemberManagementPage({ params }: PageProps) {
             {canEdit && (
               <div className="flex justify-end gap-4">
                 <button
-                  onClick={() => router.push(`/games/${gameId}`)}
+                  onClick={() => router.push(getGameDetailUrl())}
                   disabled={saving}
                   className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                 >

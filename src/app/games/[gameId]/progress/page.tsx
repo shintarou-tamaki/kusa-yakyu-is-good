@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import BattingRecordInput from "@/components/game/BattingRecordInput";
 import PlayerSubstitution from "@/components/game/PlayerSubstitution";
@@ -78,9 +78,16 @@ export default function GameProgressPage({
   params: Promise<{ gameId: string }>;
 }) {
   const { gameId } = use(params);
-  const router = useRouter();
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClientComponentClient();
+
+  // クエリパラメータを継承するためのヘルパー関数
+  const getGameDetailUrl = () => {
+    const params = searchParams.toString();
+    return params ? `/games/${gameId}?${params}` : `/games/${gameId}`;
+  };
 
   // 状態管理
   const [loading, setLoading] = useState(true);
@@ -382,10 +389,10 @@ export default function GameProgressPage({
         <div className="text-center">
           <p className="text-gray-600">試合情報が見つかりません</p>
           <Link
-            href="/dashboard"
+            href={getGameDetailUrl()}
             className="mt-4 inline-block text-blue-600 hover:underline"
           >
-            ダッシュボードに戻る
+            試合詳細に戻る
           </Link>
         </div>
       </div>
@@ -398,7 +405,7 @@ export default function GameProgressPage({
         {/* ヘッダー */}
         <div className="mb-6">
           <Link
-            href={`/games/${gameId}`}
+            href={getGameDetailUrl()}
             className="text-blue-600 hover:underline mb-2 inline-block"
           >
             ← 試合詳細に戻る

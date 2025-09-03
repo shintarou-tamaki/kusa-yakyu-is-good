@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 interface Game {
@@ -21,7 +21,7 @@ interface Game {
   record_type: string;
   is_public: boolean;
   attendance_check_enabled: boolean;
-  category?: "official" | "practice" | "scrimmage"; 
+  category?: "official" | "practice" | "scrimmage";
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -55,8 +55,12 @@ export default function EditGamePage({ params }: PageProps) {
   const [recordType, setRecordType] = useState("team");
   const [isPublic, setIsPublic] = useState(true);
   const [attendanceCheckEnabled, setAttendanceCheckEnabled] = useState(false); // 出欠確認機能の追加
-  const [category, setCategory] = useState<"official" | "practice" | "scrimmage">("practice");
-  const [isMyTeamBatFirst, setIsMyTeamBatFirst] = useState<boolean | null>(null);
+  const [category, setCategory] = useState<
+    "official" | "practice" | "scrimmage"
+  >("practice");
+  const [isMyTeamBatFirst, setIsMyTeamBatFirst] = useState<boolean | null>(
+    null
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -64,7 +68,14 @@ export default function EditGamePage({ params }: PageProps) {
 
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClientComponentClient();
+
+  // クエリパラメータを継承するためのヘルパー関数
+  const getGameDetailUrl = () => {
+    const params = searchParams.toString();
+    return params ? `/games/${gameId}?${params}` : `/games/${gameId}`;
+  };
 
   useEffect(() => {
     // 認証状態の読み込み中は何もしない
@@ -106,17 +117,17 @@ export default function EditGamePage({ params }: PageProps) {
         setAttendanceCheckEnabled(gameData.attendance_check_enabled || false); // 出欠確認設定を読み込み
         setCategory(gameData.category || "practice");
 
-// 先攻/後攻の設定を取得
-const { data: scoreData } = await supabase
-  .from("game_scores")
-  .select("is_my_team_bat_first")
-  .eq("game_id", gameId)
-  .limit(1)
-  .single();
+        // 先攻/後攻の設定を取得
+        const { data: scoreData } = await supabase
+          .from("game_scores")
+          .select("is_my_team_bat_first")
+          .eq("game_id", gameId)
+          .limit(1)
+          .single();
 
-if (scoreData) {
-  setIsMyTeamBatFirst(scoreData.is_my_team_bat_first);
-}
+        if (scoreData) {
+          setIsMyTeamBatFirst(scoreData.is_my_team_bat_first);
+        }
 
         // 編集権限の確認
         if (user) {
@@ -191,12 +202,12 @@ if (scoreData) {
       };
 
       // 先攻/後攻が設定されている場合、game_scoresも更新
-if (isMyTeamBatFirst !== null) {
-  await supabase
-    .from("game_scores")
-    .update({ is_my_team_bat_first: isMyTeamBatFirst })
-    .eq("game_id", gameId);
-}
+      if (isMyTeamBatFirst !== null) {
+        await supabase
+          .from("game_scores")
+          .update({ is_my_team_bat_first: isMyTeamBatFirst })
+          .eq("game_id", gameId);
+      }
 
       const { error } = await supabase
         .from("games")
@@ -273,7 +284,7 @@ if (isMyTeamBatFirst !== null) {
           <div className="bg-white rounded-lg shadow p-6">
             <p className="text-red-600">この試合を編集する権限がありません</p>
             <Link
-              href={`/games/${gameId}`}
+              href={getGameDetailUrl()}
               className="mt-4 inline-block text-blue-600 hover:text-blue-700"
             >
               試合詳細に戻る
@@ -291,7 +302,7 @@ if (isMyTeamBatFirst !== null) {
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-bold">試合編集</h1>
             <Link
-              href={`/games/${gameId}`}
+              href={getGameDetailUrl()}
               className="text-gray-600 hover:text-gray-900"
             >
               ← 戻る
@@ -393,72 +404,79 @@ if (isMyTeamBatFirst !== null) {
               />
             </div>
 
+            {/* 試合カテゴリー */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                試合カテゴリー
+              </label>
+              <select
+                value={category}
+                onChange={(e) =>
+                  setCategory(
+                    e.target.value as "official" | "practice" | "scrimmage"
+                  )
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="official">公式戦</option>
+                <option value="practice">練習試合</option>
+                <option value="scrimmage">紅白戦</option>
+              </select>
+            </div>
+
+            {/* 先攻/後攻 */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                先攻/後攻
+              </label>
+              <div className="flex space-x-4">
+                <button
+                  type="button"
+                  onClick={() => setIsMyTeamBatFirst(true)}
+                  className={`py-2 px-4 rounded-lg border-2 font-medium transition-colors ${
+                    isMyTeamBatFirst === true
+                      ? "border-blue-600 bg-blue-50 text-blue-700"
+                      : "border-gray-300 hover:border-gray-400"
+                  }`}
+                >
+                  先攻（表の攻撃）
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsMyTeamBatFirst(false)}
+                  className={`py-2 px-4 rounded-lg border-2 font-medium transition-colors ${
+                    isMyTeamBatFirst === false
+                      ? "border-green-600 bg-green-50 text-green-700"
+                      : "border-gray-300 hover:border-gray-400"
+                  }`}
+                >
+                  後攻（裏の攻撃）
+                </button>
+              </div>
+              <p className="mt-2 text-sm text-gray-500">
+                設定は任意です。スコア入力時にも変更できます。
+              </p>
+            </div>
 
             {/* 試合カテゴリー */}
-<div>
-  <label className="block text-sm font-medium text-gray-700 mb-2">
-    試合カテゴリー
-  </label>
-  <select
-    value={category}
-    onChange={(e) => setCategory(e.target.value as "official" | "practice" | "scrimmage")}
-    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-  >
-    <option value="official">公式戦</option>
-    <option value="practice">練習試合</option>
-    <option value="scrimmage">紅白戦</option>
-  </select>
-</div>
-
-{/* 先攻/後攻 */}
-<div>
-  <label className="block text-sm font-medium text-gray-700 mb-2">
-    先攻/後攻
-  </label>
-  <div className="flex space-x-4">
-    <button
-      type="button"
-      onClick={() => setIsMyTeamBatFirst(true)}
-      className={`py-2 px-4 rounded-lg border-2 font-medium transition-colors ${
-        isMyTeamBatFirst === true
-          ? "border-blue-600 bg-blue-50 text-blue-700"
-          : "border-gray-300 hover:border-gray-400"
-      }`}
-    >
-      先攻（表の攻撃）
-    </button>
-    <button
-      type="button"
-      onClick={() => setIsMyTeamBatFirst(false)}
-      className={`py-2 px-4 rounded-lg border-2 font-medium transition-colors ${
-        isMyTeamBatFirst === false
-          ? "border-green-600 bg-green-50 text-green-700"
-          : "border-gray-300 hover:border-gray-400"
-      }`}
-    >
-      後攻（裏の攻撃）
-    </button>
-  </div>
-  <p className="mt-2 text-sm text-gray-500">
-    設定は任意です。スコア入力時にも変更できます。
-  </p>
-</div>
-
-{/* 試合カテゴリー */}
-<div>
-  <label className="block text-sm font-medium text-gray-700 mb-2">
-    試合カテゴリー
-  </label>
-  <select
-    value={category}
-    onChange={(e) => setCategory(e.target.value as "official" | "practice" | "scrimmage")}
-    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-  >
-    <option value="official">公式戦</option>
-    <option value="practice">練習試合</option>
-    <option value="scrimmage">紅白戦</option>
-  </select>
-</div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                試合カテゴリー
+              </label>
+              <select
+                value={category}
+                onChange={(e) =>
+                  setCategory(
+                    e.target.value as "official" | "practice" | "scrimmage"
+                  )
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="official">公式戦</option>
+                <option value="practice">練習試合</option>
+                <option value="scrimmage">紅白戦</option>
+              </select>
+            </div>
 
             {/* ステータス */}
             <div>
@@ -539,7 +557,7 @@ if (isMyTeamBatFirst !== null) {
             {/* 送信ボタン */}
             <div className="flex justify-end space-x-4">
               <Link
-                href={`/games/${gameId}`}
+                href={getGameDetailUrl()}
                 className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
               >
                 キャンセル

@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 interface TeamMember {
@@ -61,7 +61,14 @@ export default function GameOperationsPage({ params }: PageProps) {
   }>({});
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClientComponentClient();
+
+  // クエリパラメータを継承するためのヘルパー関数
+  const getGameDetailUrl = () => {
+    const params = searchParams.toString();
+    return params ? `/games/${gameId}?${params}` : `/games/${gameId}`;
+  };
 
   useEffect(() => {
     // 認証状態の読み込み中は何もしない
@@ -216,7 +223,7 @@ export default function GameOperationsPage({ params }: PageProps) {
       }
 
       alert("保存しました！");
-      router.push(`/games/${gameId}`);
+      router.push(getGameDetailUrl());
     } catch (error) {
       console.error("保存エラー:", error);
       alert("保存に失敗しました");
@@ -247,7 +254,7 @@ export default function GameOperationsPage({ params }: PageProps) {
         {/* ヘッダー */}
         <div className="mb-6">
           <Link
-            href={`/games/${gameId}`}
+            href={getGameDetailUrl()}
             className="inline-flex items-center text-gray-600 hover:text-gray-900 mb-4"
           >
             <svg
@@ -379,7 +386,7 @@ export default function GameOperationsPage({ params }: PageProps) {
         {/* 保存ボタン */}
         <div className="mt-6 flex justify-end space-x-4">
           <Link
-            href={`/games/${gameId}`}
+            href={getGameDetailUrl()}
             className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
           >
             キャンセル

@@ -85,9 +85,16 @@ export default function GameDetailPage({
   );
   const [guestName, setGuestName] = useState("");
   const [addingGuest, setAddingGuest] = useState(false);
+  // const [previousPlayers, setPreviousPlayers] = useState<GamePlayer[]>([]);
 
   const { user, loading: authLoading } = useAuth();
   const supabase = createClientComponentClient();
+
+  // クエリパラメータを継承するためのヘルパー関数
+  const getUrlWithParams = (basePath: string) => {
+    const params = searchParams.toString();
+    return params ? `${basePath}?${params}` : basePath;
+  };
 
   // 戻り先を決定する関数
   const getBackLink = () => {
@@ -117,6 +124,17 @@ export default function GameDetailPage({
     // 認証状態に関わらずデータ取得を試みる
     fetchGameData();
   }, [gameId, user, authLoading]);
+
+  // // 【新規追加】参加メンバー変更監視用のuseEffect
+  // useEffect(() => {
+  //   if (gamePlayers.length > 0 && previousPlayers.length >= 0) {
+  //     // 参加メンバーの変更を検出して出欠確認と連動
+  //     if (JSON.stringify(gamePlayers) !== JSON.stringify(previousPlayers)) {
+  //       handlePlayerChange(gamePlayers, previousPlayers);
+  //     }
+  //   }
+  //   setPreviousPlayers(gamePlayers);
+  // }, [gamePlayers]);
 
   const fetchGameData = async () => {
     try {
@@ -307,6 +325,47 @@ export default function GameDetailPage({
     }
   };
 
+  // // 【新規追加】参加メンバー変更時の出欠確認更新
+  // const handlePlayerChange = async (
+  //   players: GamePlayer[],
+  //   previousPlayers: GamePlayer[]
+  // ) => {
+  //   if (!game?.attendance_check_enabled) return;
+
+  //   // 新規追加されたプレイヤーを検出
+  //   const newPlayers = players.filter(
+  //     (p) => !previousPlayers.some((prev) => prev.id === p.id)
+  //   );
+
+  //   // 削除されたプレイヤーを検出
+  //   const removedPlayers = previousPlayers.filter(
+  //     (prev) => !players.some((p) => p.id === prev.id)
+  //   );
+
+  //   // 新規プレイヤーの出欠確認を「出席」に設定
+  //   for (const player of newPlayers) {
+  //     await syncPlayerToAttendance(
+  //       player.id,
+  //       player.player_name,
+  //       player.team_member_id,
+  //       "add"
+  //     );
+  //   }
+
+  //   // 削除されたプレイヤーの出欠記録を削除（条件付き）
+  //   for (const player of removedPlayers) {
+  //     await syncPlayerToAttendance(
+  //       player.id,
+  //       player.player_name,
+  //       player.team_member_id,
+  //       "remove"
+  //     );
+  //   }
+
+  //   // 出欠確認データを再取得
+  //   await fetchGameData();
+  // };
+
   // 出欠レコードを初期化する関数
   const initializeAttendanceRecords = async () => {
     if (!user || !game?.home_team_id) return;
@@ -404,6 +463,172 @@ export default function GameDetailPage({
     }
   };
 
+  // 出欠確認データを参加メンバーと連動させる関数
+  const syncAttendanceToGamePlayers = async (
+    attendance: GameAttendance,
+    newStatus: "attending" | "absent"
+  ) => {
+    try {
+      if (newStatus === "attending") {
+        // 出席の場合：スターティングメンバー候補に優先配置
+        const playerName =
+          attendance.person_name ||
+          attendance.team_member?.user_profiles?.display_name ||
+          "名前未設定";
+
+        // 既に参加メンバーに登録されているかチェック
+        const { data: existingPlayer } = await supabase
+          .from("game_players")
+          .select("id, is_starter, batting_order")
+          .eq("game_id", gameId)
+          .eq("team_member_id", attendance.team_member_id || null)
+          .eq("player_name", playerName)
+          .maybeSingle();
+
+        if (!existingPlayer) {
+          // 現在のスターティングメンバー状況を確認
+          const { data: currentStarters } = await supabase
+            .from("game_players")
+            .select("batting_order")
+            .eq("game_id", gameId)
+            .eq("is_starter", true)
+            .not("batting_order", "is", null)
+            .order("batting_order");
+
+          // スターティングメンバーの空きスロットを探す
+          const maxStarters = 9; // 基本は9人、DH使用時は10人だが、ここではシンプルに9人固定
+          const usedOrders = new Set(
+            currentStarters?.map((s) => s.batting_order) || []
+          );
+
+          let availableBattingOrder = null;
+          for (let i = 1; i <= maxStarters; i++) {
+            if (!usedOrders.has(i)) {
+              availableBattingOrder = i;
+              break;
+            }
+          }
+
+          // スターティングメンバーに空きがあるか判定
+          const isStarterSlotAvailable = availableBattingOrder !== null;
+
+          // 参加メンバーに追加
+          const { error: insertError } = await supabase
+            .from("game_players")
+            .insert({
+              game_id: gameId,
+              player_name: playerName,
+              team_member_id: attendance.team_member_id,
+              is_starter: isStarterSlotAvailable,
+              batting_order: isStarterSlotAvailable
+                ? availableBattingOrder
+                : null,
+              position: null, // 守備位置は後で設定
+              is_active: true,
+            });
+
+          if (insertError) {
+            console.error("参加メンバー追加エラー:", insertError);
+          } else {
+            const memberType = isStarterSlotAvailable
+              ? "スターティングメンバー"
+              : "控えメンバー";
+            console.log(`${playerName} を${memberType}に追加しました`);
+          }
+        } else if (!existingPlayer.is_starter) {
+          // 既に控えメンバーとして登録されている場合、スターティングメンバーに昇格可能かチェック
+          const { data: currentStarters } = await supabase
+            .from("game_players")
+            .select("batting_order")
+            .eq("game_id", gameId)
+            .eq("is_starter", true)
+            .not("batting_order", "is", null)
+            .order("batting_order");
+
+          const maxStarters = 9;
+          const usedOrders = new Set(
+            currentStarters?.map((s) => s.batting_order) || []
+          );
+
+          let availableBattingOrder = null;
+          for (let i = 1; i <= maxStarters; i++) {
+            if (!usedOrders.has(i)) {
+              availableBattingOrder = i;
+              break;
+            }
+          }
+
+          if (availableBattingOrder !== null) {
+            // スターティングメンバーに昇格
+            const { error: updateError } = await supabase
+              .from("game_players")
+              .update({
+                is_starter: true,
+                batting_order: availableBattingOrder,
+              })
+              .eq("id", existingPlayer.id);
+
+            if (updateError) {
+              console.error("スターティングメンバー昇格エラー:", updateError);
+            } else {
+              console.log(
+                `${playerName} をスターティングメンバーに昇格しました`
+              );
+            }
+          }
+        }
+      } else if (newStatus === "absent") {
+        // 欠席の場合：参加メンバーから削除（既存記録がない場合のみ）
+        const { data: existingPlayer } = await supabase
+          .from("game_players")
+          .select("id")
+          .eq("game_id", gameId)
+          .eq("team_member_id", attendance.team_member_id || null)
+          .maybeSingle();
+
+        if (existingPlayer) {
+          // 既存の打撃・投手記録があるかチェック
+          const [battingRecords, pitchingRecords] = await Promise.all([
+            supabase
+              .from("game_batting_records")
+              .select("id")
+              .eq("game_id", gameId)
+              .eq("player_id", existingPlayer.id)
+              .limit(1),
+            supabase
+              .from("game_pitching_records")
+              .select("id")
+              .eq("game_id", gameId)
+              .eq("player_id", existingPlayer.id)
+              .limit(1),
+          ]);
+
+          // 記録がない場合のみ削除
+          if (!battingRecords.data?.length && !pitchingRecords.data?.length) {
+            const { error: deleteError } = await supabase
+              .from("game_players")
+              .delete()
+              .eq("id", existingPlayer.id);
+
+            if (deleteError) {
+              console.error("参加メンバー削除エラー:", deleteError);
+            } else {
+              const playerName =
+                attendance.person_name ||
+                attendance.team_member?.user_profiles?.display_name ||
+                "名前未設定";
+              console.log(`${playerName} を参加メンバーから削除しました`);
+            }
+          } else {
+            console.log("既存記録があるため参加メンバーから削除しませんでした");
+          }
+        }
+      }
+    } catch (error) {
+      console.error("出欠・参加メンバー連動エラー:", error);
+    }
+  };
+
   // 出欠を更新する関数
   const handleAttendanceUpdate = async (
     attendanceId: string,
@@ -414,6 +639,7 @@ export default function GameDetailPage({
     setUpdatingAttendance(attendanceId);
 
     try {
+      // 出欠データを更新
       const { error } = await supabase
         .from("game_attendances")
         .update({
@@ -424,6 +650,12 @@ export default function GameDetailPage({
         .eq("id", attendanceId);
 
       if (error) throw error;
+
+      // 更新した出欠データを取得して参加メンバーと連動
+      const updatedAttendance = attendances.find((a) => a.id === attendanceId);
+      if (updatedAttendance) {
+        await syncAttendanceToGamePlayers(updatedAttendance, newStatus);
+      }
 
       // ローカルステートを更新
       setAttendances((prev) =>
@@ -446,6 +678,9 @@ export default function GameDetailPage({
           responded_at: new Date().toISOString(),
         });
       }
+
+      // 参加メンバー表示を更新
+      await fetchGameData();
     } catch (error) {
       console.error("出欠更新エラー:", error);
       alert("出欠の更新に失敗しました");
@@ -453,7 +688,6 @@ export default function GameDetailPage({
       setUpdatingAttendance(null);
     }
   };
-
   // ゲスト（助っ人・未登録メンバー）を追加する関数
   const addGuestAttendance = async () => {
     if (!guestName.trim()) {
@@ -477,6 +711,49 @@ export default function GameDetailPage({
 
       if (error) throw error;
 
+      // 現在のスターティングメンバー状況を確認
+      const { data: currentStarters } = await supabase
+        .from("game_players")
+        .select("batting_order")
+        .eq("game_id", gameId)
+        .eq("is_starter", true)
+        .not("batting_order", "is", null)
+        .order("batting_order");
+
+      // スターティングメンバーの空きスロットを探す
+      const maxStarters = 9; // 基本は9人
+      const usedOrders = new Set(
+        currentStarters?.map((s) => s.batting_order) || []
+      );
+
+      let availableBattingOrder = null;
+      for (let i = 1; i <= maxStarters; i++) {
+        if (!usedOrders.has(i)) {
+          availableBattingOrder = i;
+          break;
+        }
+      }
+
+      // スターティングメンバーに空きがあるか判定
+      const isStarterSlotAvailable = availableBattingOrder !== null;
+
+      // 参加メンバーに追加（スターティング優先）
+      const { error: playerError } = await supabase
+        .from("game_players")
+        .insert({
+          game_id: gameId,
+          player_name: guestName.trim(),
+          team_member_id: null, // ゲストはnull
+          is_starter: isStarterSlotAvailable,
+          batting_order: isStarterSlotAvailable ? availableBattingOrder : null,
+          position: null,
+          is_active: true,
+        });
+
+      if (playerError) {
+        console.error("参加メンバー追加エラー:", playerError);
+      }
+
       // 成功したらリストに追加
       const newAttendance: GameAttendance = {
         ...data,
@@ -485,12 +762,167 @@ export default function GameDetailPage({
 
       setAttendances((prev) => [...prev, newAttendance]);
       setGuestName("");
-      alert(`${guestName}さんを出席者として追加しました`);
+
+      // 参加メンバー表示を更新
+      await fetchGameData();
+
+      // アラートを削除（UX改善）
     } catch (error) {
       console.error("ゲスト追加エラー:", error);
       alert("ゲストの追加に失敗しました");
     } finally {
       setAddingGuest(false);
+    }
+  };
+
+  // 【修正】参加メンバー追加時の出欠確認連動関数
+  const syncPlayerToAttendance = async (
+    playerId: string,
+    playerName: string,
+    teamMemberId: string | null,
+    action: "add" | "remove"
+  ) => {
+    if (!game?.attendance_check_enabled) return;
+
+    try {
+      if (action === "add") {
+        // 参加メンバー追加時：出欠確認を「出席」に設定
+        if (teamMemberId) {
+          // チームメンバーの場合：既存レコードをチェック
+          const { data: existingRecord } = await supabase
+            .from("game_attendances")
+            .select("id, status")
+            .eq("game_id", gameId)
+            .eq("team_member_id", teamMemberId)
+            .maybeSingle();
+
+          if (existingRecord) {
+            // 既存レコードがある場合は更新
+            if (existingRecord.status !== "attending") {
+              const { error: updateError } = await supabase
+                .from("game_attendances")
+                .update({
+                  status: "attending",
+                  responded_at: new Date().toISOString(),
+                })
+                .eq("id", existingRecord.id);
+
+              if (updateError) {
+                console.error("出欠確認更新エラー:", updateError);
+              } else {
+                console.log(`${playerName} の出欠確認を「出席」に更新しました`);
+              }
+            } else {
+              console.log(`${playerName} は既に出席状態です`);
+            }
+          } else {
+            // 既存レコードがない場合は新規作成
+            const { error: insertError } = await supabase
+              .from("game_attendances")
+              .insert({
+                game_id: gameId,
+                team_member_id: teamMemberId,
+                status: "attending",
+                responded_at: new Date().toISOString(),
+              });
+
+            if (insertError) {
+              console.error("出欠確認作成エラー:", insertError);
+            } else {
+              console.log(`${playerName} を出欠確認「出席」に設定しました`);
+            }
+          }
+        } else {
+          // ゲストの場合：person_nameで既存チェック
+          const { data: existingRecord } = await supabase
+            .from("game_attendances")
+            .select("id, status")
+            .eq("game_id", gameId)
+            .eq("person_name", playerName)
+            .maybeSingle();
+
+          if (existingRecord) {
+            // 既存レコードがある場合は更新
+            if (existingRecord.status !== "attending") {
+              const { error: updateError } = await supabase
+                .from("game_attendances")
+                .update({
+                  status: "attending",
+                  responded_at: new Date().toISOString(),
+                })
+                .eq("id", existingRecord.id);
+
+              if (updateError) {
+                console.error("ゲスト出欠確認更新エラー:", updateError);
+              } else {
+                console.log(
+                  `${playerName}（ゲスト）の出欠確認を「出席」に更新しました`
+                );
+              }
+            } else {
+              console.log(`${playerName}（ゲスト）は既に出席状態です`);
+            }
+          } else {
+            // 既存レコードがない場合は新規作成
+            const { error: insertError } = await supabase
+              .from("game_attendances")
+              .insert({
+                game_id: gameId,
+                person_name: playerName,
+                status: "attending",
+                responded_at: new Date().toISOString(),
+              });
+
+            if (insertError) {
+              console.error("ゲスト出欠確認作成エラー:", insertError);
+            } else {
+              console.log(
+                `${playerName}（ゲスト）を出欠確認「出席」に設定しました`
+              );
+            }
+          }
+        }
+      } else if (action === "remove") {
+        // 参加メンバー削除時：出欠記録を削除（打撃記録がない場合のみ）
+        const { data: battingRecords } = await supabase
+          .from("game_batting_records")
+          .select("id")
+          .eq("game_id", gameId)
+          .eq("player_id", playerId)
+          .limit(1);
+
+        if (!battingRecords || battingRecords.length === 0) {
+          if (teamMemberId) {
+            const { error: deleteError } = await supabase
+              .from("game_attendances")
+              .delete()
+              .eq("game_id", gameId)
+              .eq("team_member_id", teamMemberId);
+
+            if (deleteError) {
+              console.error("出欠記録削除エラー:", deleteError);
+            } else {
+              console.log(`${playerName} の出欠記録を削除しました`);
+            }
+          } else {
+            const { error: deleteError } = await supabase
+              .from("game_attendances")
+              .delete()
+              .eq("game_id", gameId)
+              .eq("person_name", playerName);
+
+            if (deleteError) {
+              console.error("ゲスト出欠記録削除エラー:", deleteError);
+            } else {
+              console.log(`${playerName}（ゲスト）の出欠記録を削除しました`);
+            }
+          }
+        } else {
+          console.log("既存記録があるため出欠記録は削除しませんでした");
+        }
+      }
+    } catch (error) {
+      console.error("参加メンバー・出欠確認連動エラー:", error);
     }
   };
 
@@ -728,6 +1160,37 @@ export default function GameDetailPage({
                         ))}
                     </tbody>
                   </table>
+                </div>
+
+                {/* 出席者（ベンチメンバー・ゲスト）を追加表示 */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-600 mb-2">
+                    ベンチメンバー・ゲスト
+                  </h3>
+                  <div className="space-y-2">
+                    {gamePlayers
+                      .filter((p) => !p.is_starter)
+                      .map((player) => (
+                        <div
+                          key={player.id}
+                          className="flex items-center justify-between p-2 bg-gray-50 rounded"
+                        >
+                          <span className="text-sm font-medium">
+                            {player.player_name}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {player.team_member_id
+                              ? "チームメンバー"
+                              : "ゲスト"}
+                          </span>
+                        </div>
+                      ))}
+                    {gamePlayers.filter((p) => !p.is_starter).length === 0 && (
+                      <p className="text-gray-500 text-sm">
+                        ベンチメンバーはいません
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -979,19 +1442,31 @@ export default function GameDetailPage({
                 {/* 左側のリンク */}
                 <div className="flex gap-4">
                   <Link
-                    href={`/games/${gameId}/players`}
+                    href={`/games/${gameId}/players${
+                      searchParams.toString()
+                        ? `?${searchParams.toString()}`
+                        : ""
+                    }`}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                   >
                     メンバー管理
                   </Link>
                   <Link
-                    href={`/games/${gameId}/progress`}
+                    href={`/games/${gameId}/progress${
+                      searchParams.toString()
+                        ? `?${searchParams.toString()}`
+                        : ""
+                    }`}
                     className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
                   >
                     試合進行管理
                   </Link>
                   <Link
-                    href={`/games/${gameId}/operations`}
+                    href={`/games/${gameId}/operations${
+                      searchParams.toString()
+                        ? `?${searchParams.toString()}`
+                        : ""
+                    }`}
                     className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
                   >
                     運営タスク管理
@@ -1001,7 +1476,7 @@ export default function GameDetailPage({
                 {/* 右側のボタン */}
                 <div className="flex gap-4">
                   <Link
-                    href={`/games/${gameId}/edit`}
+                    href={getUrlWithParams(`/games/${gameId}/edit`)}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                   >
                     編集
