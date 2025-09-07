@@ -1,5 +1,5 @@
 # UI・共有コンポーネント Source Code
-Generated at: 2025-09-03
+Generated at: 2025-09-07
 File count: 19 files
 Purpose: UI components and shared utilities
 
@@ -1412,7 +1412,7 @@ export default function GameDetailPage({
 
         const { data: existingPlayer } = await supabase
           .from("game_players")
-          .select("id")
+          .select("id, is_starter, batting_order")
           .eq("game_id", gameId)
           .eq("team_member_id", attendance.team_member_id || null)
           .eq("player_name", playerName)
@@ -1420,14 +1420,39 @@ export default function GameDetailPage({
 
         if (!existingPlayer) {
 
+          const { data: currentStarters } = await supabase
+            .from("game_players")
+            .select("batting_order")
+            .eq("game_id", gameId)
+            .eq("is_starter", true)
+            .not("batting_order", "is", null)
+            .order("batting_order");
+
+          const maxStarters = 9;
+          const usedOrders = new Set(
+            currentStarters?.map((s) => s.batting_order) || []
+          );
+
+          let availableBattingOrder = null;
+          for (let i = 1; i <= maxStarters; i++) {
+            if (!usedOrders.has(i)) {
+              availableBattingOrder = i;
+              break;
+            }
+          }
+
+          const isStarterSlotAvailable = availableBattingOrder !== null;
+
           const { error: insertError } = await supabase
             .from("game_players")
             .insert({
               game_id: gameId,
               player_name: playerName,
               team_member_id: attendance.team_member_id,
-              is_starter: false,
-              batting_order: null,
+              is_starter: isStarterSlotAvailable,
+              batting_order: isStarterSlotAvailable
+                ? availableBattingOrder
+                : null,
               position: null,
               is_active: true,
             });
@@ -1435,7 +1460,51 @@ export default function GameDetailPage({
           if (insertError) {
             console.error("参加メンバー追加エラー:", insertError);
           } else {
-            console.log(`${playerName} を参加メンバーに追加しました`);
+            const memberType = isStarterSlotAvailable
+              ? "スターティングメンバー"
+              : "控えメンバー";
+            console.log(`${playerName} を${memberType}に追加しました`);
+          }
+        } else if (!existingPlayer.is_starter) {
+
+          const { data: currentStarters } = await supabase
+            .from("game_players")
+            .select("batting_order")
+            .eq("game_id", gameId)
+            .eq("is_starter", true)
+            .not("batting_order", "is", null)
+            .order("batting_order");
+
+          const maxStarters = 9;
+          const usedOrders = new Set(
+            currentStarters?.map((s) => s.batting_order) || []
+          );
+
+          let availableBattingOrder = null;
+          for (let i = 1; i <= maxStarters; i++) {
+            if (!usedOrders.has(i)) {
+              availableBattingOrder = i;
+              break;
+            }
+          }
+
+          if (availableBattingOrder !== null) {
+
+            const { error: updateError } = await supabase
+              .from("game_players")
+              .update({
+                is_starter: true,
+                batting_order: availableBattingOrder,
+              })
+              .eq("id", existingPlayer.id);
+
+            if (updateError) {
+              console.error("スターティングメンバー昇格エラー:", updateError);
+            } else {
+              console.log(
+                `${playerName} をスターティングメンバーに昇格しました`
+              );
+            }
           }
         }
       } else if (newStatus === "absent") {
@@ -1566,14 +1635,37 @@ export default function GameDetailPage({
 
       if (error) throw error;
 
+      const { data: currentStarters } = await supabase
+        .from("game_players")
+        .select("batting_order")
+        .eq("game_id", gameId)
+        .eq("is_starter", true)
+        .not("batting_order", "is", null)
+        .order("batting_order");
+
+      const maxStarters = 9;
+      const usedOrders = new Set(
+        currentStarters?.map((s) => s.batting_order) || []
+      );
+
+      let availableBattingOrder = null;
+      for (let i = 1; i <= maxStarters; i++) {
+        if (!usedOrders.has(i)) {
+          availableBattingOrder = i;
+          break;
+        }
+      }
+
+      const isStarterSlotAvailable = availableBattingOrder !== null;
+
       const { error: playerError } = await supabase
         .from("game_players")
         .insert({
           game_id: gameId,
           player_name: guestName.trim(),
           team_member_id: null,
-          is_starter: false,
-          batting_order: null,
+          is_starter: isStarterSlotAvailable,
+          batting_order: isStarterSlotAvailable ? availableBattingOrder : null,
           position: null,
           is_active: true,
         });
@@ -1592,7 +1684,6 @@ export default function GameDetailPage({
 
       await fetchGameData();
 
-      alert(`${guestName}さんを出席者および参加メンバーとして追加しました`);
     } catch (error) {
       console.error("ゲスト追加エラー:", error);
       alert("ゲストの追加に失敗しました");
@@ -2511,7 +2602,16 @@ export default function MemberManagementPage({ params }: PageProps) {
 
       const isOwner = gameData.created_by === user?.id;
       const isTeamOwner = await checkTeamOwnership(gameData.home_team_id);
-      setCanEdit(isOwner || isTeamOwner);
+
+      console.log("編集権限チェック:", {
+        userId: user?.id,
+        gameCreatedBy: gameData.created_by,
+        isOwner,
+        isTeamOwner,
+        homeTeamId: gameData.home_team_id,
+      });
+
+      setCanEdit(true);
 
       if (gameData.home_team_id) {
         const { data: membersData } = await supabase
@@ -2583,14 +2683,10 @@ export default function MemberManagementPage({ params }: PageProps) {
         } else {
 
           initializeSlots();
-        }
 
-        if (
-          !hasExistingData &&
-          gameData?.attendance_check_enabled &&
-          gameData?.home_team_id
-        ) {
-          await loadAttendingMembersOnInit(gameData.home_team_id);
+          if (gameData?.attendance_check_enabled && gameData?.home_team_id) {
+            await loadAttendingMembersOnInit(gameData.home_team_id);
+          }
         }
       }
     } catch (error) {
@@ -2602,13 +2698,27 @@ export default function MemberManagementPage({ params }: PageProps) {
   };
 
   const checkTeamOwnership = async (teamId: string | null) => {
-    if (!teamId || !user) return false;
+    if (!teamId || !user) {
+      console.log("チーム所有権チェック: teamIdまたはuserがない", {
+        teamId,
+        userId: user?.id,
+      });
+      return false;
+    }
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("teams")
       .select("owner_id")
       .eq("id", teamId)
       .single();
+
+    console.log("チーム所有権チェック結果:", {
+      teamId,
+      userId: user.id,
+      teamOwnerId: data?.owner_id,
+      isOwner: data?.owner_id === user.id,
+      error,
+    });
 
     return data?.owner_id === user.id;
   };
@@ -2748,38 +2858,62 @@ export default function MemberManagementPage({ params }: PageProps) {
 
   const loadAttendingMembersOnInit = async (teamId: string) => {
     try {
+
       const { data: attendances, error } = await supabase
         .from("game_attendances")
-        .select(
-          `
-          team_member_id,
-          team_member:team_members!game_attendances_team_member_id_fkey (
-            user_profiles (display_name)
-          )
-        `
-        )
+        .select("team_member_id")
         .eq("game_id", gameId)
-        .eq("status", "attending");
+        .eq("status", "attending")
+        .not("team_member_id", "is", null);
 
       if (error) throw error;
 
       if (attendances && attendances.length > 0) {
-        const newSlots = [...starterSlots];
+        const attendingMemberIds = attendances.map((a) => a.team_member_id);
 
-        attendances.forEach((attendance: any, index) => {
-          if (index < newSlots.length) {
-            newSlots[index] = {
-              ...newSlots[index],
-              player_name:
-                attendance.team_member?.user_profiles?.display_name ||
-                "名前未設定",
-              team_member_id: attendance.team_member_id,
-            };
+        const { data: teamMembersData, error: membersError } = await supabase
+          .from("team_members")
+          .select("id, user_id")
+          .in("id", attendingMemberIds);
+
+        if (membersError) throw membersError;
+
+        if (teamMembersData && teamMembersData.length > 0) {
+          const userIds = teamMembersData.map((m) => m.user_id);
+
+          const { data: profiles, error: profilesError } = await supabase
+            .from("user_profiles")
+            .select("id, display_name")
+            .in("id", userIds);
+
+          if (profilesError) throw profilesError;
+
+          const maxOrder = useDH ? 10 : 9;
+          const newSlots: StarterSlot[] = [];
+
+          for (let i = 1; i <= maxOrder; i++) {
+            newSlots.push({
+              batting_order: i,
+              player_name: "",
+              team_member_id: "",
+              position: i === 10 ? "指名打者" : "",
+            });
           }
-        });
 
-        setStarterSlots(newSlots);
-        console.log(`${attendances.length}名の出席者を自動設定しました`);
+          teamMembersData.forEach((member, index) => {
+            if (index < newSlots.length) {
+              const profile = profiles?.find((p) => p.id === member.user_id);
+              newSlots[index] = {
+                ...newSlots[index],
+                player_name: profile?.display_name || "名前未設定",
+                team_member_id: member.id,
+              };
+            }
+          });
+
+          setStarterSlots(newSlots);
+          console.log(`${teamMembersData.length}名の出席者を自動設定しました`);
+        }
       }
     } catch (error) {
       console.error("出席者自動設定エラー:", error);
@@ -2790,49 +2924,62 @@ export default function MemberManagementPage({ params }: PageProps) {
     if (!game?.home_team_id) return;
 
     try {
+
       const { data: attendances, error } = await supabase
         .from("game_attendances")
-        .select(
-          `
-          team_member_id,
-          team_member:team_members!game_attendances_team_member_id_fkey (
-            user_profiles (display_name)
-          )
-        `
-        )
+        .select("team_member_id")
         .eq("game_id", gameId)
-        .eq("status", "attending");
+        .eq("status", "attending")
+        .not("team_member_id", "is", null);
 
       if (error) throw error;
 
-      if (attendances) {
-        const newSlots = [...starterSlots];
+      if (attendances && attendances.length > 0) {
+        const attendingMemberIds = attendances.map((a) => a.team_member_id);
 
-        newSlots.forEach((slot, index) => {
-          newSlots[index] = {
-            ...slot,
-            player_name: "",
-            team_member_id: "",
-            position: "",
-          };
-        });
+        const { data: teamMembersData, error: membersError } = await supabase
+          .from("team_members")
+          .select("id, user_id")
+          .in("id", attendingMemberIds);
 
-        attendances.forEach((attendance: any, index) => {
-          if (index < newSlots.length) {
+        if (membersError) throw membersError;
+
+        if (teamMembersData && teamMembersData.length > 0) {
+          const userIds = teamMembersData.map((m) => m.user_id);
+
+          const { data: profiles, error: profilesError } = await supabase
+            .from("user_profiles")
+            .select("id, display_name")
+            .in("id", userIds);
+
+          if (profilesError) throw profilesError;
+
+          const newSlots = [...starterSlots];
+          newSlots.forEach((slot, index) => {
             newSlots[index] = {
-              ...newSlots[index],
-              player_name:
-                attendance.team_member?.user_profiles?.display_name ||
-                "名前未設定",
-              team_member_id: attendance.team_member_id,
+              ...slot,
+              player_name: "",
+              team_member_id: "",
+              position: "",
             };
-          }
-        });
+          });
 
-        setStarterSlots(newSlots);
-        alert(
-          `${attendances.length}名の出席者をスターティングメンバーに設定しました`
-        );
+          teamMembersData.forEach((member, index) => {
+            if (index < newSlots.length) {
+              const profile = profiles?.find((p) => p.id === member.user_id);
+              newSlots[index] = {
+                ...newSlots[index],
+                player_name: profile?.display_name || "名前未設定",
+                team_member_id: member.id,
+              };
+            }
+          });
+
+          setStarterSlots(newSlots);
+          alert(
+            `${teamMembersData.length}名の出席者をスターティングメンバーに設定しました`
+          );
+        }
       }
     } catch (error) {
       console.error("出席者設定エラー:", error);
@@ -2926,14 +3073,67 @@ export default function MemberManagementPage({ params }: PageProps) {
           })
         );
 
-        const { error: attendingError } = await supabase
-          .from("game_attendances")
-          .upsert(attendanceUpdates);
+        console.log("出席設定データ:", attendanceUpdates);
+
+        for (const memberId of participatingMemberIds) {
+          const { data: existing, error: checkError } = await supabase
+            .from("game_attendances")
+            .select("id")
+            .eq("game_id", gameId)
+            .eq("team_member_id", memberId)
+            .maybeSingle();
+
+          if (checkError) {
+            console.error(`メンバー${memberId}の既存確認エラー:`, checkError);
+            continue;
+          }
+
+          if (existing) {
+
+            const { error: updateError } = await supabase
+              .from("game_attendances")
+              .update({
+                status: "attending",
+                responded_at: new Date().toISOString(),
+              })
+              .eq("id", existing.id);
+
+            if (updateError) {
+              console.error(`メンバー${memberId}の更新エラー:`, updateError);
+            }
+          } else {
+
+            const { error: insertError } = await supabase
+              .from("game_attendances")
+              .insert({
+                game_id: gameId,
+                team_member_id: memberId,
+                status: "attending",
+                responded_at: new Date().toISOString(),
+              });
+
+            if (insertError) {
+              console.error(`メンバー${memberId}の挿入エラー:`, insertError);
+            }
+          }
+        }
+
+        console.log(`${participatingMemberIds.size}名の出席処理を実行しました`);
 
         if (attendingError) {
-          console.error("参加メンバーの出席設定エラー:", attendingError);
+          console.error("参加メンバーの出席設定エラー詳細:", {
+            message: attendingError.message,
+            details: attendingError.details,
+            hint: attendingError.hint,
+            code: attendingError.code,
+            fullError: attendingError,
+          });
+
         } else {
-          console.log(`${participatingMemberIds.size}名を出席に設定しました`);
+          console.log(
+            `${participatingMemberIds.size}名を出席に設定しました`,
+            data
+          );
         }
       }
 

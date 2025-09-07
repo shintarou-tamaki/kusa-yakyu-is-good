@@ -736,21 +736,6 @@ export default function MemberManagementPage({ params }: PageProps) {
 
         console.log(`${participatingMemberIds.size}名の出席処理を実行しました`);
 
-        if (attendingError) {
-          console.error("参加メンバーの出席設定エラー詳細:", {
-            message: attendingError.message,
-            details: attendingError.details,
-            hint: attendingError.hint,
-            code: attendingError.code,
-            fullError: attendingError,
-          });
-          // エラーが発生してもメンバー保存処理は続行
-        } else {
-          console.log(
-            `${participatingMemberIds.size}名を出席に設定しました`,
-            data
-          );
-        }
       }
 
       // 2. 全チームメンバーを取得
